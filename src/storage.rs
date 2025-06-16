@@ -1,5 +1,3 @@
-use alloc::boxed::Box;
-
 pub struct RawVec<const DIMS: u16>
 where
     [(); DIMS as usize]: Sized,

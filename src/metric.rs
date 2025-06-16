@@ -1,6 +1,6 @@
 use crate::storage::{QuantVec, Quantization};
 
-pub trait MetricResult: Ord {
+pub trait MetricResult: Ord + Clone + Copy {
     const MIN: Self;
     const MAX: Self;
 }
