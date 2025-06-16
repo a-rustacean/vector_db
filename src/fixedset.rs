@@ -19,16 +19,20 @@ where
     buckets: [u64; next_pow2_u16(M)],
 }
 
+impl<const M: u16> Default for FixedSet<M>
+where
+    [(); next_pow2_u16(M)]: Sized,
+{
+    fn default() -> Self {
+        Self { buckets: [0; _] }
+    }
+}
+
 impl<const M: u16> FixedSet<M>
 where
     [(); next_pow2_u16(M)]: Sized,
 {
     const MASK: u32 = next_pow2_u16(M) as u32 - 1;
-
-    #[inline]
-    pub fn new() -> Self {
-        Self { buckets: [0; _] }
-    }
 
     #[inline]
     pub fn insert(&mut self, value: u32) {

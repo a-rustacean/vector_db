@@ -140,10 +140,12 @@ where
             if neighbor.score > existing_neighbor.score {
                 let existing_neighbor = mem::replace(existing_neighbor, neighbor);
                 let existing_neighbor_node = &graph.nodes_arena[existing_neighbor.node];
-                existing_neighbor_node
+                if let Some(mut neighbors) = existing_neighbor_node
                     .neighbors
                     .try_write_for(Duration::SECOND)
-                    .map(|mut neighbors| neighbors.remove_neighbor(node_handle));
+                {
+                    neighbors.remove_neighbor(node_handle);
+                }
                 self.recompute_lowest_index();
                 true
             } else {
@@ -163,7 +165,7 @@ where
 
         for i in (0..M).rev() {
             let Some(neighbor) = &self.neighbors[i as usize] else {
-                lowest_index = i as u16;
+                lowest_index = i;
                 lowest_score = D::Result::MIN;
                 break;
             };
@@ -192,7 +194,7 @@ where
 
         for i in (0..M).rev() {
             let Some(neighbor) = &self.neighbors[i as usize] else {
-                lowest_index = i as u16;
+                lowest_index = i;
                 lowest_score = D::Result::MIN;
                 break;
             };
@@ -246,10 +248,12 @@ where
             if neighbor.score > existing_neighbor.score {
                 let existing_neighbor = mem::replace(existing_neighbor, neighbor);
                 let existing_neighbor_node = &graph.nodes0_arena[existing_neighbor.node];
-                existing_neighbor_node
+                if let Some(mut neighbors) = existing_neighbor_node
                     .neighbors
                     .try_write_for(Duration::SECOND)
-                    .map(|mut neighbors| neighbors.remove_neighbor(node_handle));
+                {
+                    neighbors.remove_neighbor(node_handle);
+                }
                 self.recompute_lowest_index();
                 true
             } else {
@@ -269,7 +273,7 @@ where
 
         for i in (0..M0).rev() {
             let Some(neighbor) = &self.neighbors[i as usize] else {
-                lowest_index = i as u16;
+                lowest_index = i;
                 lowest_score = D::Result::MIN;
                 break;
             };
@@ -298,7 +302,7 @@ where
 
         for i in (0..M0).rev() {
             let Some(neighbor) = &self.neighbors[i as usize] else {
-                lowest_index = i as u16;
+                lowest_index = i;
                 lowest_score = D::Result::MIN;
                 break;
             };

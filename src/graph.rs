@@ -45,10 +45,7 @@ where
     D: DistanceMetric<DIMS, Q>,
 {
     fn clone(&self) -> Self {
-        Self {
-            node: self.node,
-            score: self.score,
-        }
+        *self
     }
 }
 
@@ -331,7 +328,7 @@ where
     ) -> ArrayVec<SearchResult<DIMS, Q, D, Node<M, DIMS, Q, D>>, { TOP_K as usize }> {
         let mut candidate_queue = BinaryHeap::new();
         let mut results = Vec::new();
-        let mut set = FixedSet::<M>::new();
+        let mut set = FixedSet::<M>::default();
 
         let node = &self.nodes_arena[entry_node];
         let vec = &self.vec_arena[node.vec];
@@ -382,7 +379,7 @@ where
 
         results.sort_unstable_by(|a, b| b.cmp(a));
 
-        ArrayVec::from_iter(results.into_iter())
+        ArrayVec::from_iter(results)
     }
 
     fn search_level0<const TOP_K: u16>(
@@ -393,7 +390,7 @@ where
     ) -> ArrayVec<SearchResult<DIMS, Q, D, Node0<M0, DIMS, Q, D>>, { TOP_K as usize }> {
         let mut candidate_queue = BinaryHeap::new();
         let mut results = Vec::new();
-        let mut set = FixedSet::<M0>::new();
+        let mut set = FixedSet::<M0>::default();
 
         let node = &self.nodes0_arena[entry_node];
         let vec = &self.vec_arena[node.vec];
@@ -443,6 +440,6 @@ where
 
         results.sort_unstable_by(|a, b| b.cmp(a));
 
-        ArrayVec::from_iter(results.into_iter())
+        ArrayVec::from_iter(results)
     }
 }

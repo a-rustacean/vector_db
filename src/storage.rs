@@ -5,6 +5,7 @@ where
     pub vec: [f32; DIMS as usize],
 }
 
+#[allow(unused)]
 pub struct QuantVec<const DIMS: u16, Q>
 where
     [(); DIMS as usize]: Sized,

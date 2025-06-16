@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use crate::storage::{QuantVec, Quantization};
 
 pub trait MetricResult: Ord + Clone + Copy {
