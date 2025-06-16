@@ -9,7 +9,6 @@ use crate::{
     graph::{Graph, SearchResult},
     metric::{DistanceMetric, MetricResult},
     storage::{QuantVec, Quantization},
-    types::{HNSWLevel, NeighborIndex},
 };
 
 pub struct Node<const M: u16, const DIMS: u16, Q, D>
@@ -19,7 +18,6 @@ where
     Q: Quantization<DIMS>,
     D: DistanceMetric<DIMS, Q>,
 {
-    pub(crate) hnsw_level: HNSWLevel,
     pub(crate) vec: VecHandle<DIMS, Q>,
     pub(crate) neighbors: RwLock<Neighbors<M, DIMS, Q, D>>,
     pub(crate) child: NodeHandle<M, DIMS, Q, D>,
@@ -32,7 +30,6 @@ where
     Q: Quantization<DIMS>,
     D: DistanceMetric<DIMS, Q>,
 {
-    pub(crate) hnsw_level: HNSWLevel,
     pub(crate) vec: VecHandle<DIMS, Q>,
     pub(crate) neighbors: RwLock<Neighbors0<M0, DIMS, Q, D>>,
 }
@@ -44,13 +41,8 @@ where
     Q: Quantization<DIMS>,
     D: DistanceMetric<DIMS, Q>,
 {
-    pub fn new(
-        hnsw_level: HNSWLevel,
-        vec: VecHandle<DIMS, Q>,
-        child: NodeHandle<M, DIMS, Q, D>,
-    ) -> Self {
+    pub fn new(vec: VecHandle<DIMS, Q>, child: NodeHandle<M, DIMS, Q, D>) -> Self {
         Self {
-            hnsw_level,
             vec,
             neighbors: RwLock::new(Neighbors::default()),
             child,
@@ -65,9 +57,8 @@ where
     Q: Quantization<DIMS>,
     D: DistanceMetric<DIMS, Q>,
 {
-    pub fn new(hnsw_level: HNSWLevel, vec: VecHandle<DIMS, Q>) -> Self {
+    pub fn new(vec: VecHandle<DIMS, Q>) -> Self {
         Self {
-            hnsw_level,
             vec,
             neighbors: RwLock::new(Neighbors0::default()),
         }
@@ -85,7 +76,7 @@ where
     Q: Quantization<DIMS>,
     D: DistanceMetric<DIMS, Q>,
 {
-    pub(crate) lowest_index: NeighborIndex,
+    pub(crate) lowest_index: u16,
     pub(crate) lowest_score: D::Result,
     pub(crate) neighbors: [Option<Neighbor<M, DIMS, Q, D>>; M as usize],
 }
@@ -97,7 +88,7 @@ where
     Q: Quantization<DIMS>,
     D: DistanceMetric<DIMS, Q>,
 {
-    pub(crate) lowest_index: NeighborIndex,
+    pub(crate) lowest_index: u16,
     pub(crate) lowest_score: D::Result,
     pub(crate) neighbors: [Option<Neighbor0<M0, DIMS, Q, D>>; M0 as usize],
 }
@@ -111,7 +102,7 @@ where
 {
     fn default() -> Self {
         Self {
-            lowest_index: NeighborIndex::from(0),
+            lowest_index: 0,
             lowest_score: D::Result::MIN,
             neighbors: core::array::from_fn(|_| None),
         }
@@ -134,7 +125,7 @@ where
     where
         MConstraints<M0>: Sized,
     {
-        let neighbor_slot = &mut self.neighbors[*self.lowest_index as usize];
+        let neighbor_slot = &mut self.neighbors[self.lowest_index as usize];
 
         if let Some(existing_neighbor) = neighbor_slot {
             if neighbor.score > existing_neighbor.score {
@@ -183,7 +174,7 @@ where
         if let Some(neighbor_index) = neighbor_index {
             self.neighbors[neighbor_index] = None;
 
-            self.lowest_index = NeighborIndex::from(lowest_index);
+            self.lowest_index = lowest_index;
             self.lowest_score = lowest_score;
         }
     }
@@ -205,7 +196,7 @@ where
             }
         }
 
-        self.lowest_index = NeighborIndex::from(lowest_index);
+        self.lowest_index = lowest_index;
         self.lowest_score = lowest_score;
     }
 }
@@ -219,7 +210,7 @@ where
 {
     fn default() -> Self {
         Self {
-            lowest_index: NeighborIndex::from(0),
+            lowest_index: 0,
             lowest_score: D::Result::MIN,
             neighbors: core::array::from_fn(|_| None),
         }
@@ -242,7 +233,7 @@ where
     where
         MConstraints<M>: Sized,
     {
-        let neighbor_slot = &mut self.neighbors[*self.lowest_index as usize];
+        let neighbor_slot = &mut self.neighbors[self.lowest_index as usize];
 
         if let Some(existing_neighbor) = neighbor_slot {
             if neighbor.score > existing_neighbor.score {
@@ -291,7 +282,7 @@ where
         if let Some(neighbor_index) = neighbor_index {
             self.neighbors[neighbor_index] = None;
 
-            self.lowest_index = NeighborIndex::from(lowest_index);
+            self.lowest_index = lowest_index;
             self.lowest_score = lowest_score;
         }
     }
@@ -313,7 +304,7 @@ where
             }
         }
 
-        self.lowest_index = NeighborIndex::from(lowest_index);
+        self.lowest_index = lowest_index;
         self.lowest_score = lowest_score;
     }
 }
@@ -394,7 +385,7 @@ where
         });
 
         Self {
-            lowest_index: NeighborIndex::from(lowest_index),
+            lowest_index,
             lowest_score,
             neighbors,
         }
@@ -454,7 +445,7 @@ where
         });
 
         Self {
-            lowest_index: NeighborIndex::from(lowest_index),
+            lowest_index,
             lowest_score,
             neighbors,
         }

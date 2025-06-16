@@ -18,7 +18,6 @@ pub mod graph;
 pub mod metric;
 pub mod node;
 pub mod storage;
-pub mod types;
 
 pub type MConstraints<const M: u16> = (
     [(); M as usize],

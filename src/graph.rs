@@ -11,7 +11,6 @@ use crate::{
         Neighbor, Neighbor0, Neighbors, Neighbors0, Node, Node0, Node0Handle, NodeHandle, VecHandle,
     },
     storage::{QuantVec, Quantization, RawVec},
-    types::{HNSWLevel, NeighborIndex},
 };
 
 pub struct Graph<const M: u16, const M0: u16, const DIMS: u16, const LEVELS: u8, Q, D>
@@ -114,12 +113,11 @@ where
         let root_vec_raw = RawVec::from([0.0; DIMS as usize]);
         let root_vec_quant = QuantVec::from(root_vec_raw);
         let vec_handle = vec_arena.alloc(root_vec_quant);
-        let node0 = Node0::new(HNSWLevel::from(0), vec_handle);
+        let node0 = Node0::new(vec_handle);
         let node0_handle = nodes0_arena.alloc(node0);
         let mut prev_node = node0_handle.cast();
-        for level in 1..LEVELS {
-            let level = HNSWLevel::from(level);
-            let node = Node::new(level, vec_handle, prev_node);
+        for _ in 1..LEVELS {
+            let node = Node::new(vec_handle, prev_node);
             let node_handle = nodes_arena.alloc(node);
             prev_node = node_handle;
         }
@@ -205,7 +203,6 @@ where
     ) -> NodeHandle<M, DIMS, Q, D> {
         let neighbors = Neighbors::default();
         let node = Node {
-            hnsw_level: HNSWLevel::from(0),
             vec,
             neighbors: RwLock::new(neighbors),
             child,
@@ -241,7 +238,7 @@ where
             }
         }
         neighbors_guard.lowest_score = lowest_score;
-        neighbors_guard.lowest_index = NeighborIndex::from(lowest_index);
+        neighbors_guard.lowest_index = lowest_index;
         node_handle
     }
 
@@ -252,7 +249,6 @@ where
     ) -> Node0Handle<M0, DIMS, Q, D> {
         let neighbors = Neighbors0::default();
         let node = Node0 {
-            hnsw_level: HNSWLevel::from(0),
             vec,
             neighbors: RwLock::new(neighbors),
         };
@@ -287,7 +283,7 @@ where
             }
         }
         neighbors_guard.lowest_score = lowest_score;
-        neighbors_guard.lowest_index = NeighborIndex::from(lowest_index);
+        neighbors_guard.lowest_index = lowest_index;
         node_handle
     }
 
