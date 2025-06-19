@@ -1,86 +1,102 @@
-pub struct RawVec<const DIMS: u16>
-where
-    [(); DIMS as usize]: Sized,
-{
-    pub vec: [f32; DIMS as usize],
+use core::ptr::{self, Pointee};
+
+use crate::arena::{DynAlloc, DynInit};
+
+#[derive(Debug, Clone, Copy)]
+pub enum Quantization {
+    SignedByte,
+    UnsignedByte,
+    HalfPrecisionFP,
+    FullPrecisionFP,
 }
 
-#[allow(unused)]
-pub struct QuantVec<const DIMS: u16, Q>
-where
-    [(); DIMS as usize]: Sized,
-    Q: Quantization<DIMS>,
-{
+impl Quantization {
+    #[inline]
+    fn size(&self) -> usize {
+        match self {
+            Self::SignedByte | Self::UnsignedByte => 1,
+            Self::HalfPrecisionFP => 2,
+            Self::FullPrecisionFP => 4,
+        }
+    }
+}
+
+#[repr(C, align(4))]
+pub struct QuantVec {
     mag: f32,
-    vec: Q::QuantVec,
+    vec: [u8],
 }
 
-pub trait Quantization<const DIMS: u16>
-where
-    [(); DIMS as usize]: Sized,
-{
-    type QuantVec;
+impl DynAlloc for QuantVec {
+    type Metadata = (Quantization, u16);
 
-    fn quantize(vec: RawVec<DIMS>) -> Self::QuantVec;
-}
+    const ALIGN: usize = 4;
 
-impl<const DIMS: u16, Q> From<RawVec<DIMS>> for QuantVec<DIMS, Q>
-where
-    [(); DIMS as usize]: Sized,
-    Q: Quantization<DIMS>,
-{
-    fn from(vec: RawVec<DIMS>) -> Self {
-        let mag = vec.mag();
-        let vec = Q::quantize(vec);
-        Self { mag, vec }
+    #[inline]
+    fn size((quantization, len): Self::Metadata) -> usize {
+        let multiplier = quantization.size();
+        4 + len as usize * multiplier
+    }
+
+    #[inline]
+    fn ptr_metadata((quantization, len): Self::Metadata) -> <Self as Pointee>::Metadata {
+        let multiplier = quantization.size();
+        len as usize * multiplier
     }
 }
 
-impl<const DIM: u16> RawVec<DIM>
-where
-    [(); DIM as usize]: Sized,
-{
-    pub fn mag(&self) -> f32 {
-        self.vec.iter().map(|dim| dim * dim).sum::<f32>().sqrt()
-    }
-}
+impl DynInit for QuantVec {
+    type Args = *const f32;
 
-impl<const DIM: u16> From<[f32; DIM as usize]> for RawVec<DIM>
-where
-    [(); DIM as usize]: Sized,
-{
-    fn from(vec: [f32; DIM as usize]) -> Self {
-        Self { vec }
-    }
-}
+    unsafe fn new_at(ptr: *mut u8, (quantization, len): Self::Metadata, raw_vec_ptr: Self::Args) {
+        let raw_vec_ref: &[f32] = &*ptr::from_raw_parts(raw_vec_ptr, len as usize);
+        let mag = raw_vec_ref.iter().map(|dim| dim * dim).sum::<f32>().sqrt();
+        (ptr as *mut f32).write(mag);
 
-macro_rules! define_quantizations {
-    ($($name:ident($vec:ident) -> [$result:ty] { $body:expr })+) => {
-        $(
-            pub struct $name;
+        let vec_ptr = ptr.add(4);
 
-            impl<const DIMS: u16> Quantization<DIMS> for $name
-            where
-                [(); DIMS as usize]: Sized,
-            {
-                type QuantVec = [$result; DIMS as usize];
-
-                fn quantize($vec: RawVec<DIMS>) -> Self::QuantVec {
-                    $body
+        match quantization {
+            Quantization::SignedByte => {
+                let vec_ptr = vec_ptr as *mut i8;
+                for (i, dim) in raw_vec_ref.iter().enumerate() {
+                    vec_ptr
+                        .add(i)
+                        .write((dim * 127.0).clamp(-128.0, 127.0) as i8);
                 }
             }
-        )+
-    };
+            Quantization::UnsignedByte => {
+                for (i, dim) in raw_vec_ref.iter().enumerate() {
+                    vec_ptr.add(i).write((dim * 255.0).clamp(0.0, 255.0) as u8);
+                }
+            }
+            Quantization::HalfPrecisionFP => {
+                let vec_ptr = vec_ptr as *mut f16;
+                for (i, dim) in raw_vec_ref.iter().enumerate() {
+                    vec_ptr.add(i).write(*dim as f16);
+                }
+            }
+            Quantization::FullPrecisionFP => {
+                let vec_ptr = vec_ptr as *mut f32;
+                ptr::copy_nonoverlapping(raw_vec_ptr, vec_ptr, len as usize);
+            }
+        }
+    }
 }
 
-define_quantizations! {
-    SignedByte(vec) -> [i8] {
-        vec.vec.map(|dim| (dim * 128.0).clamp(-128.0, 127.0) as i8)
+impl QuantVec {
+    pub fn as_signed_byte(&self) -> &[i8] {
+        unsafe { &*(&self.vec as *const [u8] as *const [i8]) }
     }
-    HalfPrecisionFP(vec) -> [f16] {
-        vec.vec.map(|dim| dim as f16)
+
+    pub fn as_unsigned_byte(&self) -> &[u8] {
+        &self.vec
     }
-    FullPrecisionFP(vec) -> [f32] {
-        vec.vec
+
+    pub fn as_half_precision_fp(&self) -> &[f16] {
+        unsafe { &*ptr::from_raw_parts(&self.vec as *const [u8] as *const f16, self.vec.len() / 2) }
+    }
+
+    pub fn as_full_precision_fp(&self) -> &[f32] {
+        unsafe { &*ptr::from_raw_parts(&self.vec as *const [u8] as *const f32, self.vec.len() / 4) }
     }
 }

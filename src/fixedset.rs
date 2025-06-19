@@ -1,3 +1,5 @@
+use alloc::boxed::Box;
+
 pub const fn next_pow2_u16(mut x: u16) -> usize {
     if x == 0 {
         return 1;
@@ -11,39 +13,30 @@ pub const fn next_pow2_u16(mut x: u16) -> usize {
     (x + 1) as usize
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct FixedSet<const M: u16>
-where
-    [(); next_pow2_u16(M)]: Sized,
-{
-    buckets: [u64; next_pow2_u16(M)],
+pub struct FixedSet {
+    buckets: Box<[u64]>,
 }
 
-impl<const M: u16> Default for FixedSet<M>
-where
-    [(); next_pow2_u16(M)]: Sized,
-{
-    fn default() -> Self {
-        Self { buckets: [0; _] }
+impl FixedSet {
+    #[inline]
+    pub fn new(len: u16) -> Self {
+        Self {
+            buckets: unsafe { Box::new_zeroed_slice(next_pow2_u16(len)).assume_init() },
+        }
     }
-}
-
-impl<const M: u16> FixedSet<M>
-where
-    [(); next_pow2_u16(M)]: Sized,
-{
-    const MASK: u32 = next_pow2_u16(M) as u32 - 1;
 
     #[inline]
     pub fn insert(&mut self, value: u32) {
-        let bucket = (value >> 6) & Self::MASK;
+        let mask = (self.buckets.len() - 1) as u32;
+        let bucket = (value >> 6) & mask;
         let bit_pos = value & 0x3f;
         self.buckets[bucket as usize] |= 1u64 << bit_pos;
     }
 
     #[inline]
     pub fn is_member(&self, value: u32) -> bool {
-        let bucket = (value >> 6) & Self::MASK;
+        let mask = (self.buckets.len() - 1) as u32;
+        let bucket = (value >> 6) & mask;
         let bit_pos = value & 0x3f;
         (self.buckets[bucket as usize] & (1u64 << bit_pos)) != 0
     }

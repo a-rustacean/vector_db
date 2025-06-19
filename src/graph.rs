@@ -1,181 +1,127 @@
-use alloc::{collections::binary_heap::BinaryHeap, vec::Vec};
-use arrayvec::ArrayVec;
-use parking_lot::RwLock;
+use core::{alloc::Layout, cmp::Ordering, ptr};
+
+use alloc::{
+    alloc::{alloc, dealloc, handle_alloc_error},
+    boxed::Box,
+    vec::Vec,
+};
+use binary_heap_plus::BinaryHeap;
 
 use crate::{
-    MConstraints,
-    arena::{Arena, Handle},
+    arena::{Arena, DynAlloc, DynInit, Handle},
     fixedset::FixedSet,
-    metric::{DistanceMetric, MetricResult},
-    node::{
-        Neighbor, Neighbor0, Neighbors, Neighbors0, Node, Node0, Node0Handle, NodeHandle, VecHandle,
-    },
-    storage::{QuantVec, Quantization, RawVec},
+    metric::{DistanceMetric, DistanceMetricKind},
+    node::{Neighbor, Neighbor0, Node, Node0, Node0Handle, NodeHandle, VecHandle},
+    storage::{QuantVec, Quantization},
+    util::map_boxed_slice,
 };
 
-pub struct Graph<const M: u16, const M0: u16, const DIMS: u16, const LEVELS: u8, Q, D>
-where
-    MConstraints<M>: Sized,
-    MConstraints<M0>: Sized,
-    [(); DIMS as usize]: Sized,
-    Q: Quantization<DIMS>,
-    D: DistanceMetric<DIMS, Q>,
-{
-    pub(crate) nodes_arena: Arena<Node<M, DIMS, Q, D>>,
-    pub(crate) nodes0_arena: Arena<Node0<M0, DIMS, Q, D>>,
-    vec_arena: Arena<QuantVec<DIMS, Q>>,
-    top_level_root_node: NodeHandle<M, DIMS, Q, D>,
+pub struct Graph {
+    m: u16,
+    m0: u16,
+    dims: u16,
+    levels: u8,
+    quantization: Quantization,
+    distance_metric: DistanceMetric,
+    nodes_arena: Arena<Node>,
+    nodes0_arena: Arena<Node0>,
+    vec_arena: Arena<QuantVec>,
+    top_level_root_node: NodeHandle,
 }
 
-pub struct SearchResult<const DIMS: u16, Q, D, T>
-where
-    [(); DIMS as usize]: Sized,
-    Q: Quantization<DIMS>,
-    D: DistanceMetric<DIMS, Q>,
-{
+#[repr(C, align(4))]
+pub struct SearchResult<T: ?Sized> {
     pub node: Handle<T>,
-    pub score: D::Result,
+    pub score: f32,
 }
 
-impl<const DIMS: u16, Q, D, T> Clone for SearchResult<DIMS, Q, D, T>
-where
-    [(); DIMS as usize]: Sized,
-    Q: Quantization<DIMS>,
-    D: DistanceMetric<DIMS, Q>,
-{
+impl<T: ?Sized> Clone for SearchResult<T> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<const DIMS: u16, Q, D, T> Copy for SearchResult<DIMS, Q, D, T>
-where
-    [(); DIMS as usize]: Sized,
-    Q: Quantization<DIMS>,
-    D: DistanceMetric<DIMS, Q>,
-{
-}
+impl<T: ?Sized> Copy for SearchResult<T> {}
 
-impl<const DIMS: u16, Q, D, T> Ord for SearchResult<DIMS, Q, D, T>
-where
-    [(); DIMS as usize]: Sized,
-    Q: Quantization<DIMS>,
-    D: DistanceMetric<DIMS, Q>,
-{
-    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-        self.score.cmp(&other.score)
-    }
-}
+impl Graph {
+    pub fn new(
+        m: u16,
+        m0: u16,
+        dims: u16,
+        levels: u8,
+        quantization: Quantization,
+        metric: DistanceMetricKind,
+    ) -> Self {
+        let nodes_arena = Arena::new(1024, m);
+        let nodes0_arena = Arena::new(1024, m0);
+        let vec_arena = Arena::new(1024, (quantization, dims));
 
-impl<const DIMS: u16, Q, D, T> PartialOrd for SearchResult<DIMS, Q, D, T>
-where
-    [(); DIMS as usize]: Sized,
-    Q: Quantization<DIMS>,
-    D: DistanceMetric<DIMS, Q>,
-{
-    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
+        let root_vec_raw: Box<[f32]> =
+            unsafe { Box::new_zeroed_slice(dims as usize).assume_init() };
 
-impl<const DIMS: u16, Q, D, T> PartialEq for SearchResult<DIMS, Q, D, T>
-where
-    [(); DIMS as usize]: Sized,
-    Q: Quantization<DIMS>,
-    D: DistanceMetric<DIMS, Q>,
-{
-    fn eq(&self, other: &Self) -> bool {
-        self.node == other.node
-    }
-}
+        let vec_handle = vec_arena.alloc(root_vec_raw.as_ptr());
 
-impl<const DIMS: u16, Q, D, T> Eq for SearchResult<DIMS, Q, D, T>
-where
-    [(); DIMS as usize]: Sized,
-    Q: Quantization<DIMS>,
-    D: DistanceMetric<DIMS, Q>,
-{
-}
+        let node0_handle = nodes0_arena.alloc(vec_handle);
 
-impl<const M: u16, const M0: u16, const DIMS: u16, const LEVELS: u8, Q, D> Default
-    for Graph<M, M0, DIMS, LEVELS, Q, D>
-where
-    MConstraints<M>: Sized,
-    MConstraints<M0>: Sized,
-    [(); DIMS as usize]: Sized,
-    Q: Quantization<DIMS>,
-    D: DistanceMetric<DIMS, Q>,
-{
-    fn default() -> Self {
-        let nodes_arena = Arena::new();
-        let nodes0_arena = Arena::new();
-        let vec_arena = Arena::new();
-        let root_vec_raw = RawVec::from([0.0; DIMS as usize]);
-        let root_vec_quant = QuantVec::from(root_vec_raw);
-        let vec_handle = vec_arena.alloc(root_vec_quant);
-        let node0 = Node0::new(vec_handle);
-        let node0_handle = nodes0_arena.alloc(node0);
         let mut prev_node = node0_handle.cast();
-        for _ in 1..LEVELS {
-            let node = Node::new(vec_handle, prev_node);
-            let node_handle = nodes_arena.alloc(node);
+
+        for _ in 1..=levels {
+            let node_handle = nodes_arena.alloc((vec_handle, prev_node));
             prev_node = node_handle;
         }
+
         Self {
+            m,
+            m0,
+            dims,
+            levels,
+            quantization,
+            distance_metric: DistanceMetric::new(metric, quantization, dims),
             nodes_arena,
             nodes0_arena,
             vec_arena,
             top_level_root_node: prev_node,
         }
     }
-}
 
-impl<const M: u16, const M0: u16, const DIMS: u16, const LEVELS: u8, Q, D>
-    Graph<M, M0, DIMS, LEVELS, Q, D>
-where
-    MConstraints<M>: Sized,
-    MConstraints<M0>: Sized,
-    [(); DIMS as usize]: Sized,
-    Q: Quantization<DIMS>,
-    D: DistanceMetric<DIMS, Q>,
-{
-    pub fn index(&self, vec: RawVec<DIMS>, ef: u16) -> Handle<QuantVec<DIMS, Q>> {
-        let vec = QuantVec::from(vec);
-        let vec_handle = self.vec_arena.alloc(vec);
+    pub fn index(&self, vec: &[f32], ef: u16) -> VecHandle {
+        let vec_handle = self.vec_arena.alloc(vec.as_ptr());
         let vec = &self.vec_arena[vec_handle];
-        let max_level = LEVELS;
+
+        // TODO(a-rustacean): fix
+        let max_level = self.levels;
 
         self.index_level(
             vec_handle,
             vec,
             self.top_level_root_node,
-            LEVELS - 1,
+            self.levels,
             max_level,
             ef,
         );
+
         vec_handle
     }
 
     fn index_level(
         &self,
-        vec_handle: VecHandle<DIMS, Q>,
-        vec: &QuantVec<DIMS, Q>,
-        entry_node: NodeHandle<M, DIMS, Q, D>,
+        vec_handle: VecHandle,
+        vec: &QuantVec,
+        entry_node: NodeHandle,
         current_level: u8,
         max_level: u8,
         ef: u16,
-    ) -> NodeHandle<M, DIMS, Q, D> {
+    ) -> NodeHandle {
         if current_level > max_level {
-            let results = self.search_level::<1>(entry_node, vec, ef);
+            let results = self.search_level(entry_node, vec, ef, 1);
             let child = self.nodes_arena[results[0].node].child;
 
-            self.index_level(vec_handle, vec, child, current_level - 1, max_level, ef);
-            NodeHandle::invalid()
+            self.index_level(vec_handle, vec, child, current_level - 1, max_level, ef)
         } else if current_level == 0 {
             self.index_level0(vec_handle, vec, entry_node.cast(), ef)
                 .cast()
         } else {
-            let results = self.search_level::<{ M * 2 }>(entry_node, vec, ef);
+            let results = self.search_level(entry_node, vec, ef, self.m);
             let child = self.nodes_arena[results[0].node].child;
 
             let child = self.index_level(vec_handle, vec, child, current_level - 1, max_level, ef);
@@ -186,150 +132,167 @@ where
 
     fn index_level0(
         &self,
-        vec_handle: VecHandle<DIMS, Q>,
-        vec: &QuantVec<DIMS, Q>,
-        entry_node: Node0Handle<M0, DIMS, Q, D>,
+        vec_handle: VecHandle,
+        vec: &QuantVec,
+        entry_node: Node0Handle,
         ef: u16,
-    ) -> Node0Handle<M0, DIMS, Q, D> {
-        let results = self.search_level0::<{ M0 * 2 }>(entry_node, vec, ef);
+    ) -> Node0Handle {
+        let results = self.search_level0(entry_node, vec, ef, self.m0);
         self.create_node0(vec_handle, results)
     }
 
     fn create_node(
         &self,
-        vec: VecHandle<DIMS, Q>,
-        results: ArrayVec<SearchResult<DIMS, Q, D, Node<M, DIMS, Q, D>>, { (M * 2) as usize }>,
-        child: NodeHandle<M, DIMS, Q, D>,
-    ) -> NodeHandle<M, DIMS, Q, D> {
-        let neighbors = Neighbors::default();
-        let node = Node {
-            vec,
-            neighbors: RwLock::new(neighbors),
-            child,
-        };
-        let node_handle = self.nodes_arena.alloc(node);
+        vec_handle: VecHandle,
+        results: Box<[SearchResult<Node>]>,
+        child: NodeHandle,
+    ) -> NodeHandle {
+        let node_handle = self.nodes_arena.alloc((vec_handle, child));
         let node = &self.nodes_arena[node_handle];
         let mut neighbors_guard = node.neighbors.write();
-        let mut neighbors_connected = 0;
-        let mut lowest_index = 0;
-        let mut lowest_score = D::Result::MAX;
-        for neighbor in results {
-            let neighbor_node = &self.nodes_arena[neighbor.node];
-            let node_inserted = neighbor_node.neighbors.write().insert_neighbor(
-                neighbor.node,
-                Neighbor {
-                    node: node_handle,
-                    score: neighbor.score,
-                },
-                self,
+
+        unsafe {
+            ptr::copy_nonoverlapping(
+                results.as_ptr() as *const Neighbor,
+                neighbors_guard.neighbors.as_mut_ptr(),
+                results.len(),
             );
-            if node_inserted {
-                neighbors_guard.neighbors[neighbors_connected as usize] = Some(neighbor.into());
+        }
 
-                if neighbor.score < lowest_score {
+        if results.len() as u16 == self.m {
+            neighbors_guard.neighbors_full = true;
+            let mut lowest_index = 0;
+            let mut lowest_score = self.distance_metric.max_value();
+
+            for i in 0..self.m {
+                let neighbor = &neighbors_guard.neighbors[i as usize];
+                if self.distance_metric.cmp_score(neighbor.score, lowest_score) == Ordering::Less {
                     lowest_score = neighbor.score;
-                    lowest_index = neighbors_connected;
-                }
-
-                neighbors_connected += 1;
-                if neighbors_connected >= M0 {
-                    break;
+                    lowest_index = i;
                 }
             }
+
+            neighbors_guard.lowest_index = lowest_index;
+            neighbors_guard.lowest_score = lowest_score;
+        } else {
+            neighbors_guard.lowest_index = results.len() as u16;
         }
-        neighbors_guard.lowest_score = lowest_score;
-        neighbors_guard.lowest_index = lowest_index;
+
+        for result in results {
+            let neighbor = &self.nodes_arena[result.node];
+            neighbor.neighbors.write().insert_neighbor(
+                &self.distance_metric,
+                node_handle,
+                result.score,
+            );
+        }
+
         node_handle
     }
 
     fn create_node0(
         &self,
-        vec: VecHandle<DIMS, Q>,
-        results: ArrayVec<SearchResult<DIMS, Q, D, Node0<M0, DIMS, Q, D>>, { (M0 * 2) as usize }>,
-    ) -> Node0Handle<M0, DIMS, Q, D> {
-        let neighbors = Neighbors0::default();
-        let node = Node0 {
-            vec,
-            neighbors: RwLock::new(neighbors),
-        };
-        let node_handle = self.nodes0_arena.alloc(node);
+        vec_handle: VecHandle,
+        results: Box<[SearchResult<Node0>]>,
+    ) -> Node0Handle {
+        let node_handle = self.nodes0_arena.alloc(vec_handle);
         let node = &self.nodes0_arena[node_handle];
         let mut neighbors_guard = node.neighbors.write();
-        let mut neighbors_connected = 0;
-        let mut lowest_index = 0;
-        let mut lowest_score = D::Result::MAX;
-        for neighbor in results {
-            let neighbor_node = &self.nodes0_arena[neighbor.node];
-            let node_inserted = neighbor_node.neighbors.write().insert_neighbor(
-                neighbor.node,
-                Neighbor0 {
-                    node: node_handle,
-                    score: neighbor.score,
-                },
-                self,
+
+        unsafe {
+            ptr::copy_nonoverlapping(
+                results.as_ptr() as *const Neighbor0,
+                neighbors_guard.neighbors.as_mut_ptr(),
+                results.len(),
             );
-            if node_inserted {
-                neighbors_guard.neighbors[neighbors_connected as usize] = Some(neighbor.into());
+        }
 
-                if neighbor.score < lowest_score {
+        if results.len() as u16 == self.m0 {
+            neighbors_guard.neighbors_full = true;
+            let mut lowest_index = 0;
+            let mut lowest_score = self.distance_metric.max_value();
+
+            for i in 0..self.m0 {
+                let neighbor = &neighbors_guard.neighbors[i as usize];
+                if self.distance_metric.cmp_score(neighbor.score, lowest_score) == Ordering::Less {
                     lowest_score = neighbor.score;
-                    lowest_index = neighbors_connected;
-                }
-
-                neighbors_connected += 1;
-                if neighbors_connected >= M0 {
-                    break;
+                    lowest_index = i;
                 }
             }
+
+            neighbors_guard.lowest_index = lowest_index;
+            neighbors_guard.lowest_score = lowest_score;
+        } else {
+            neighbors_guard.lowest_index = results.len() as u16;
         }
-        neighbors_guard.lowest_score = lowest_score;
-        neighbors_guard.lowest_index = lowest_index;
+
+        for result in results {
+            let neighbor = &self.nodes0_arena[result.node];
+            neighbor.neighbors.write().insert_neighbor(
+                &self.distance_metric,
+                node_handle,
+                result.score,
+            );
+        }
+
         node_handle
     }
 
-    pub fn search<const TOP_K: u16>(
-        &self,
-        query: RawVec<DIMS>,
-        ef: u16,
-    ) -> ArrayVec<SearchResult<DIMS, Q, D, QuantVec<DIMS, Q>>, { TOP_K as usize }> {
-        let query = QuantVec::from(query);
+    pub fn search(&self, query: &[f32], ef: u16, top_k: u16) -> Box<[SearchResult<QuantVec>]> {
+        let (query, ptr, layout): (&QuantVec, *mut u8, Layout) = unsafe {
+            let metadata = (self.quantization, self.dims);
+            let size = QuantVec::size_aligned(metadata);
+            let layout = Layout::from_size_align_unchecked(size, QuantVec::ALIGN);
+            let ptr = alloc(layout);
+            if ptr.is_null() {
+                handle_alloc_error(layout);
+            }
+            QuantVec::new_at(ptr, metadata, query.as_ptr());
+            let query = &*ptr::from_raw_parts(ptr, QuantVec::ptr_metadata(metadata));
+            (query, ptr, layout)
+        };
         let mut entry_node = self.top_level_root_node;
 
-        // range = (LEVELS, 1]
-        for _ in 1..LEVELS {
-            let results = self.search_level::<1>(entry_node, &query, ef);
-            let result = if results.is_empty() {
-                results[0].node.cast()
-            } else {
-                self.nodes_arena[entry_node].child
-            };
-            entry_node = result;
+        // ignore the `0..self.range`, the actual search range in (0, self.levels]
+        for _ in 0..self.levels {
+            let results = self.search_level(entry_node, query, ef, top_k);
+            let child = self.nodes_arena[results[0].node].child;
+            entry_node = child;
         }
 
         let entry_node = entry_node.cast();
 
-        let results = self.search_level0::<TOP_K>(entry_node, &query, ef);
+        let results = self.search_level0(entry_node, query, ef, top_k);
 
-        ArrayVec::from_iter(results.iter().map(|result| SearchResult {
-            node: self.nodes0_arena[result.node].vec,
-            score: result.score,
-        }))
+        unsafe {
+            dealloc(ptr, layout);
+        }
+
+        unsafe {
+            map_boxed_slice(results, |result| SearchResult {
+                node: self.nodes0_arena[result.node].vec,
+                score: result.score,
+            })
+        }
     }
 
-    fn search_level<const TOP_K: u16>(
+    fn search_level(
         &self,
-        entry_node: NodeHandle<M, DIMS, Q, D>,
-        query: &QuantVec<DIMS, Q>,
+        entry_node: NodeHandle,
+        query: &QuantVec,
         ef: u16,
-    ) -> ArrayVec<SearchResult<DIMS, Q, D, Node<M, DIMS, Q, D>>, { TOP_K as usize }> {
-        let mut candidate_queue = BinaryHeap::new();
+        top_k: u16,
+    ) -> Box<[SearchResult<Node>]> {
+        let mut candidate_queue = BinaryHeap::new_by(|a: &SearchResult<Node>, b| {
+            self.distance_metric.cmp_score(a.score, b.score)
+        });
         let mut results = Vec::new();
-        let mut set = FixedSet::<M>::default();
+        let mut set = FixedSet::new(self.m);
 
         let node = &self.nodes_arena[entry_node];
         let vec = &self.vec_arena[node.vec];
 
-        let score = D::calculate(query, vec);
+        let score = self.distance_metric.calculate(query, vec);
 
         set.insert(*entry_node);
         candidate_queue.push(SearchResult {
@@ -337,27 +300,23 @@ where
             score,
         });
 
-        let mut nodes_visited = 0;
+        let mut nodes_visisted = 0;
 
         while let Some(entry) = candidate_queue.pop() {
-            if nodes_visited >= ef {
+            if nodes_visisted >= ef {
                 break;
             }
-            nodes_visited += 1;
 
+            nodes_visisted += 1;
             results.push(entry);
 
             let node = &self.nodes_arena[entry_node];
 
-            for neighbor in &node.neighbors.read().neighbors {
-                let Some(neighbor) = neighbor else {
-                    continue;
-                };
-
-                if set.is_member(*neighbor.node) {
+            for neighbor in node.neighbors.read().neighbors() {
+                if !set.is_member(*neighbor.node) {
                     let neighbor_node = &self.nodes_arena[neighbor.node];
                     let neighbor_vec = &self.vec_arena[neighbor_node.vec];
-                    let score = D::calculate(query, neighbor_vec);
+                    let score = self.distance_metric.calculate(query, neighbor_vec);
 
                     set.insert(*neighbor.node);
                     candidate_queue.push(SearchResult {
@@ -368,59 +327,63 @@ where
             }
         }
 
-        if results.len() > TOP_K as usize {
-            results.select_nth_unstable_by(TOP_K as usize, |a, b| b.cmp(a));
-            results.truncate(TOP_K as usize);
+        let top_k = top_k as usize;
+
+        if results.len() > top_k {
+            results.select_nth_unstable_by(top_k, |a, b| {
+                self.distance_metric.cmp_score(a.score, b.score)
+            });
+            results.truncate(top_k);
         }
 
-        results.sort_unstable_by(|a, b| b.cmp(a));
+        results.sort_unstable_by(|a, b| self.distance_metric.cmp_score(a.score, b.score));
 
-        ArrayVec::from_iter(results)
+        results.into_boxed_slice()
     }
 
-    fn search_level0<const TOP_K: u16>(
+    fn search_level0(
         &self,
-        entry_node: Node0Handle<M0, DIMS, Q, D>,
-        query: &QuantVec<DIMS, Q>,
+        entry_node: Node0Handle,
+        query: &QuantVec,
         ef: u16,
-    ) -> ArrayVec<SearchResult<DIMS, Q, D, Node0<M0, DIMS, Q, D>>, { TOP_K as usize }> {
-        let mut candidate_queue = BinaryHeap::new();
+        top_k: u16,
+    ) -> Box<[SearchResult<Node0>]> {
+        let mut candidate_queue = BinaryHeap::new_by(|a: &SearchResult<Node0>, b| {
+            self.distance_metric.cmp_score(a.score, b.score)
+        });
         let mut results = Vec::new();
-        let mut set = FixedSet::<M0>::default();
+        let mut set = FixedSet::new(self.m0);
 
         let node = &self.nodes0_arena[entry_node];
         let vec = &self.vec_arena[node.vec];
 
-        let score = D::calculate(query, vec);
+        let score = self.distance_metric.calculate(query, vec);
+
+        set.insert(*entry_node);
         candidate_queue.push(SearchResult {
             node: entry_node,
             score,
         });
 
-        let mut nodes_visited = 0;
+        let mut nodes_visisted = 0;
 
         while let Some(entry) = candidate_queue.pop() {
-            if nodes_visited >= ef {
+            if nodes_visisted >= ef {
                 break;
             }
-            nodes_visited += 1;
 
+            nodes_visisted += 1;
             results.push(entry);
 
             let node = &self.nodes0_arena[entry_node];
 
-            for neighbor in &node.neighbors.read().neighbors {
-                let Some(neighbor) = neighbor else {
-                    continue;
-                };
-
-                if set.is_member(*neighbor.node) {
+            for neighbor in node.neighbors.read().neighbors() {
+                if !set.is_member(*neighbor.node) {
                     let neighbor_node = &self.nodes0_arena[neighbor.node];
                     let neighbor_vec = &self.vec_arena[neighbor_node.vec];
-                    let score = D::calculate(query, neighbor_vec);
+                    let score = self.distance_metric.calculate(query, neighbor_vec);
 
                     set.insert(*neighbor.node);
-
                     candidate_queue.push(SearchResult {
                         node: neighbor.node,
                         score,
@@ -429,13 +392,17 @@ where
             }
         }
 
-        if results.len() > TOP_K as usize {
-            results.select_nth_unstable_by(TOP_K as usize, |a, b| b.cmp(a));
-            results.truncate(TOP_K as usize);
+        let top_k = top_k as usize;
+
+        if results.len() > top_k {
+            results.select_nth_unstable_by(top_k, |a, b| {
+                self.distance_metric.cmp_score(a.score, b.score)
+            });
+            results.truncate(top_k);
         }
 
-        results.sort_unstable_by(|a, b| b.cmp(a));
+        results.sort_unstable_by(|a, b| self.distance_metric.cmp_score(a.score, b.score));
 
-        ArrayVec::from_iter(results)
+        results.into_boxed_slice()
     }
 }

@@ -1,129 +1,52 @@
-#![allow(unused)]
+use core::{cmp::Ordering, f32};
 
 use crate::storage::{QuantVec, Quantization};
 
-pub trait MetricResult: Ord + Clone + Copy {
-    const MIN: Self;
-    const MAX: Self;
+#[derive(Debug, Clone, Copy)]
+pub enum DistanceMetricKind {
+    Cosine,
+    Euclidean,
+    Hamming,
+    DotProduct,
 }
 
-pub trait DistanceMetric<const DIMS: u16, Q: Quantization<DIMS>>
-where
-    [(); DIMS as usize]: Sized,
-{
-    type Result: MetricResult;
-
-    fn calculate(a: &QuantVec<DIMS, Q>, b: &QuantVec<DIMS, Q>) -> Self::Result;
+#[allow(unused)]
+pub struct DistanceMetric {
+    kind: DistanceMetricKind,
+    quantization: Quantization,
+    len: u16,
 }
 
-macro_rules! define_distance_metrics {
-    ($($name:ident -> $result:ident($ord:ident, $min:expr => $max:expr) { $($quantization:ident($a: ident, $b: ident) { $body: expr })+ })+) => {
-        $(define_distance_metrics!(@define_metric $name -> $result($ord, $min => $max) { $($quantization($a, $b) { $body })+ });)+
-    };
-    (@define_metric $name:ident -> $result:ident($ord:ident, $min:expr => $max:expr) { $($quantization:ident($a: ident, $b: ident) { $body: expr })+ }) => {
-        define_distance_metrics!(@define_structs $name -> $result($min => $max));
-        define_distance_metrics!(@impl_ord $result($ord));
-        define_distance_metrics!(@trait_impls $name -> $result { $($quantization($a, $b) { $body })+ });
-    };
-    (@impl_ord $result:ident(asc)) => {
-        impl Ord for $result {
-            fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-                self.0.total_cmp(&other.0)
-            }
-        }
-    };
-    (@impl_ord $result:ident(dsc)) => {
-        impl Ord for $result {
-            fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-                other.0.total_cmp(&self.0)
-            }
-        }
-    };
-    (@define_structs $name:ident -> $result:ident($min:expr => $max:expr)) => {
-        pub struct $name;
-
-        #[derive(Debug, Clone, Copy)]
-        pub struct $result(f32);
-
-        impl PartialOrd for $result {
-            fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-                Some(self.cmp(other))
-            }
-        }
-
-        impl Eq for $result {}
-
-        impl PartialEq for $result {
-            fn eq(&self, other: &Self) -> bool {
-                self.0.total_cmp(&other.0) == core::cmp::Ordering::Equal
-            }
-        }
-
-        impl MetricResult for $result {
-            const MIN: Self = Self($min);
-            const MAX: Self = Self($max);
-        }
-    };
-    (@trait_impls $name:ident -> $result:ident { $($quantization:ident($a: ident, $b: ident) { $body: expr })+ }) => {
-        $(define_distance_metrics!(@trait_impl $name<$quantization>($a, $b) -> $result { $body });)+
-    };
-    (@trait_impl $name:ident<$quantization:ident>($a: ident, $b: ident) -> $result:ident { $body: expr }) => {
-        impl<const DIMS: u16> DistanceMetric<DIMS, crate::storage::$quantization> for $name
-        where
-            [(); DIMS as usize]: Sized,
-        {
-            type Result = $result;
-
-            fn calculate($a: &QuantVec<DIMS, crate::storage::$quantization>, $b: &QuantVec<DIMS, crate::storage::$quantization>) -> Self::Result {
-                $body
-            }
-        }
-    };
-}
-
-define_distance_metrics! {
-    Cosine -> CosineSimilarity(asc, -1.0 => 1.0) {
-        SignedByte(a, b) {
-            todo!()
-        }
-        HalfPrecisionFP(a, b) {
-            todo!()
-        }
-        FullPrecisionFP(a, b) {
-            todo!()
+impl DistanceMetric {
+    pub fn new(kind: DistanceMetricKind, quantization: Quantization, len: u16) -> Self {
+        Self {
+            kind,
+            quantization,
+            len,
         }
     }
-    Euclidean -> EuclideanDistance(dsc, f32::INFINITY => 0.0) {
-        SignedByte(a, b) {
-            todo!()
-        }
-        HalfPrecisionFP(a, b) {
-            todo!()
-        }
-        FullPrecisionFP(a, b) {
-            todo!()
+
+    pub fn calculate(&self, _a: &QuantVec, _b: &QuantVec) -> f32 {
+        todo!()
+    }
+
+    pub fn cmp_score(&self, a: f32, b: f32) -> Ordering {
+        use DistanceMetricKind::*;
+        match self.kind {
+            Cosine => a.total_cmp(&b),
+            Euclidean => b.total_cmp(&a),
+            Hamming => b.total_cmp(&a),
+            DotProduct => a.total_cmp(&b),
         }
     }
-    Hamming -> HammingDistance(dsc, f32::MAX => 0.0) {
-        SignedByte(a, b) {
-            todo!()
-        }
-        HalfPrecisionFP(a, b) {
-            todo!()
-        }
-        FullPrecisionFP(a, b) {
-            todo!()
-        }
-    }
-    DotProduct -> DotProductSimilarity(asc, f32::NEG_INFINITY => f32::INFINITY) {
-        SignedByte(a, b) {
-            todo!()
-        }
-        HalfPrecisionFP(a, b) {
-            todo!()
-        }
-        FullPrecisionFP(a, b) {
-            todo!()
+
+    pub fn max_value(&self) -> f32 {
+        use DistanceMetricKind::*;
+        match self.kind {
+            Cosine => 1.0,
+            Euclidean => 0.0,
+            Hamming => 0.0,
+            DotProduct => f32::INFINITY,
         }
     }
 }
