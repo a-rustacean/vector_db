@@ -8,8 +8,9 @@ use alloc::{
 use binary_heap_plus::BinaryHeap;
 
 use crate::{
-    arena::{Arena, DynAlloc, DynInit, Handle},
+    arena::{Arena, DynAlloc, DynInit},
     fixedset::FixedSet,
+    handle::Handle,
     metric::{DistanceMetric, DistanceMetricKind},
     node::{Neighbor, Neighbor0, Node, Node0, Node0Handle, NodeHandle, VecHandle},
     storage::{QuantVec, Quantization},

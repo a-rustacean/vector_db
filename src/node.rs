@@ -1,7 +1,8 @@
 use core::cmp::Ordering;
 
 use crate::{
-    arena::{DynAlloc, DynDefault, DynInit, Handle},
+    arena::{DynAlloc, DynDefault, DynInit},
+    handle::Handle,
     metric::DistanceMetric,
     rwlock::RwLock,
     storage::QuantVec,
@@ -301,7 +302,7 @@ mod tests {
     #[test]
     fn test_clear_arena() {
         let metadata: u16 = 2;
-        let arena = Arena::<Node>::new(16, metadata);
+        let mut arena = Arena::<Node>::new(16, metadata);
         let dummy_vec_handle = VecHandle::invalid();
         let dummy_child_handle = NodeHandle::invalid();
 

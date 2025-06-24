@@ -1,83 +1,19 @@
 use core::{
     alloc::Layout,
-    fmt,
     marker::PhantomData,
     mem,
-    ops::{Deref, Index},
+    ops::Index,
     ptr::{self, NonNull, Pointee},
     sync::atomic::{AtomicU32, Ordering},
 };
 
 use alloc::{
     alloc::{alloc, handle_alloc_error},
-    format,
     vec::Vec,
 };
 use parking_lot::{RwLock, RwLockWriteGuard};
 
-pub struct Handle<T: ?Sized> {
-    index: u32,
-    _marker: PhantomData<T>,
-}
-
-impl<T: ?Sized> Handle<T> {
-    fn new(index: u32) -> Self {
-        Self {
-            index,
-            _marker: PhantomData,
-        }
-    }
-
-    pub fn invalid() -> Self {
-        Self::new(u32::MAX)
-    }
-
-    pub fn is_valid(&self) -> bool {
-        self.index != u32::MAX
-    }
-
-    pub fn cast<U: ?Sized>(self) -> Handle<U> {
-        Handle::new(self.index)
-    }
-}
-
-impl<T: ?Sized> Deref for Handle<T> {
-    type Target = u32;
-
-    fn deref(&self) -> &Self::Target {
-        &self.index
-    }
-}
-
-impl<T: ?Sized> core::hash::Hash for Handle<T> {
-    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        self.index.hash(state);
-    }
-}
-
-impl<T: ?Sized> PartialEq for Handle<T> {
-    fn eq(&self, other: &Self) -> bool {
-        self.index == other.index
-    }
-}
-
-impl<T: ?Sized> Eq for Handle<T> {}
-
-impl<T: ?Sized> Clone for Handle<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T: ?Sized> Copy for Handle<T> {}
-
-impl<T: ?Sized> fmt::Debug for Handle<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple(&format!("Handle<{:?}>", core::any::type_name::<T>()))
-            .field(&self.index)
-            .finish()
-    }
-}
+use crate::handle::{DoubleHandle, Handle};
 
 struct Chunk<T: DynAlloc + ?Sized> {
     ptr: NonNull<u8>,
@@ -119,7 +55,6 @@ impl<T: DynAlloc + ?Sized> Chunk<T> {
         T::new_at(self.get_raw(item_size, index), metadata, args);
     }
 
-    #[allow(unused)]
     unsafe fn init_default(&self, item_size: usize, index: usize, metadata: T::Metadata)
     where
         T: DynDefault,
@@ -188,28 +123,36 @@ impl<T: Default> DynDefault for T {
     }
 }
 
-pub struct Arena<T: DynAlloc + ?Sized> {
+pub struct ArenaWithoutIndex<T: DynAlloc + ?Sized> {
     chunks: RwLock<Vec<Chunk<T>>>,
     chunk_size: usize,
     metadata: T::Metadata,
+}
+
+pub struct Arena<T: DynAlloc + ?Sized> {
+    arena: ArenaWithoutIndex<T>,
     next_index: AtomicU32,
 }
 
-impl<T: DynAlloc + ?Sized> Arena<T> {
+pub struct DoubleArena<A: DynAlloc + ?Sized, B: DynAlloc + ?Sized> {
+    arena_a: ArenaWithoutIndex<A>,
+    arena_b: ArenaWithoutIndex<B>,
+    next_index: AtomicU32,
+}
+
+impl<T: DynAlloc + ?Sized> ArenaWithoutIndex<T> {
     pub fn new(chunk_size: usize, metadata: T::Metadata) -> Self {
         Self {
             chunks: RwLock::new(Vec::new()),
             chunk_size,
             metadata,
-            next_index: AtomicU32::new(0),
         }
     }
 
-    pub fn alloc(&self, args: T::Args) -> Handle<T>
+    pub fn alloc(&self, index: u32, args: T::Args) -> Handle<T>
     where
         T: DynInit,
     {
-        let index = self.next_index.fetch_add(1, Ordering::Relaxed);
         let chunk_index = index as usize / self.chunk_size;
         let offset = index as usize % self.chunk_size;
 
@@ -236,12 +179,10 @@ impl<T: DynAlloc + ?Sized> Arena<T> {
         Handle::new(index)
     }
 
-    #[allow(unused)]
-    pub fn alloc_default(&self) -> Handle<T>
+    pub fn alloc_default(&self, index: u32) -> Handle<T>
     where
         T: DynDefault,
     {
-        let index = self.next_index.fetch_add(1, Ordering::Relaxed);
         let chunk_index = index as usize / self.chunk_size;
         let offset = index as usize % self.chunk_size;
 
@@ -268,30 +209,18 @@ impl<T: DynAlloc + ?Sized> Arena<T> {
         Handle::new(index)
     }
 
-    /// Get the number of allocated items
-    #[allow(unused)]
-    pub fn len(&self) -> usize {
-        self.next_index.load(Ordering::Acquire) as usize
-    }
-
-    /// Check if the arena is empty
-    #[allow(unused)]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
     fn split_handle(&self, handle: Handle<T>) -> (usize, usize) {
-        let index = handle.index as usize;
+        let index = *handle as usize;
         (index / self.chunk_size, index % self.chunk_size)
     }
 
-    #[allow(unused)]
-    pub fn clear(&self) {
+    pub fn clear(&self, len: u32) {
         let mut chunks_guard = self.chunks.write();
         let chunks = mem::take(&mut *chunks_guard); // Take ownership of the chunks
 
-        let total = self.next_index.load(Ordering::Acquire) as usize;
-        if total == 0 {
+        let len = len as usize;
+
+        if len == 0 {
             return; // No objects allocated
         }
 
@@ -303,7 +232,7 @@ impl<T: DynAlloc + ?Sized> Arena<T> {
         let item_align = T::ALIGN;
 
         // Drop each allocated object in reverse order (from last to first)
-        for i in (0..total).rev() {
+        for i in (0..len).rev() {
             let chunk_index = i / self.chunk_size;
             let offset = i % self.chunk_size;
             let chunk = &chunks[chunk_index];
@@ -323,11 +252,126 @@ impl<T: DynAlloc + ?Sized> Arena<T> {
                 alloc::alloc::dealloc(chunk.ptr.as_ptr(), layout);
             }
         }
+    }
+}
+
+impl<T: DynAlloc + ?Sized> Arena<T> {
+    pub fn new(chunk_size: usize, metadata: T::Metadata) -> Self {
+        Self {
+            arena: ArenaWithoutIndex::new(chunk_size, metadata),
+            next_index: AtomicU32::new(0),
+        }
+    }
+
+    pub fn alloc(&self, args: T::Args) -> Handle<T>
+    where
+        T: DynInit,
+    {
+        let index = self.next_index.fetch_add(1, Ordering::Relaxed);
+
+        self.arena.alloc(index, args);
+
+        Handle::new(index)
+    }
+
+    pub fn alloc_default(&self) -> Handle<T>
+    where
+        T: DynDefault,
+    {
+        let index = self.next_index.fetch_add(1, Ordering::Relaxed);
+
+        self.arena.alloc_default(index);
+
+        Handle::new(index)
+    }
+
+    /// Get the number of allocated items
+    #[allow(unused)]
+    pub fn len(&self) -> usize {
+        self.next_index.load(Ordering::Acquire) as usize
+    }
+
+    /// Check if the arena is empty
+    #[allow(unused)]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn clear(&mut self) {
+        let len = self.next_index.load(Ordering::Acquire);
+        self.arena.clear(len);
         self.next_index.store(0, Ordering::Release);
     }
 }
 
-impl<T: DynAlloc + ?Sized> Index<Handle<T>> for Arena<T> {
+impl<A: DynAlloc + ?Sized, B: DynAlloc + ?Sized> DoubleArena<A, B> {
+    pub fn new(chunk_size: usize, metadata_a: A::Metadata, metadata_b: B::Metadata) -> Self {
+        Self {
+            arena_a: ArenaWithoutIndex::new(chunk_size, metadata_a),
+            arena_b: ArenaWithoutIndex::new(chunk_size, metadata_b),
+            next_index: AtomicU32::new(0),
+        }
+    }
+
+    pub fn alloc(&self, args_a: A::Args, args_b: B::Args) -> DoubleHandle<A, B>
+    where
+        A: DynInit,
+        B: DynInit,
+    {
+        let index = self.next_index.fetch_add(1, Ordering::Relaxed);
+
+        self.arena_a.alloc(index, args_a);
+        self.arena_b.alloc(index, args_b);
+
+        DoubleHandle::new(index)
+    }
+
+    pub fn alloc_default(&self) -> DoubleHandle<A, B>
+    where
+        A: DynDefault,
+        B: DynDefault,
+    {
+        let index = self.next_index.fetch_add(1, Ordering::Relaxed);
+
+        self.arena_a.alloc_default(index);
+        self.arena_b.alloc_default(index);
+
+        DoubleHandle::new(index)
+    }
+
+    /// Get the number of allocated items
+    #[allow(unused)]
+    pub fn len(&self) -> usize {
+        self.next_index.load(Ordering::Acquire) as usize
+    }
+
+    /// Check if the arena is empty
+    #[allow(unused)]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn clear(&mut self) {
+        let len = self.next_index.load(Ordering::Acquire);
+        self.arena_a.clear(len);
+        self.arena_b.clear(len);
+        self.next_index.store(0, Ordering::Release);
+    }
+}
+
+impl<T: DynAlloc + ?Sized> Drop for Arena<T> {
+    fn drop(&mut self) {
+        self.clear();
+    }
+}
+
+impl<A: DynAlloc + ?Sized, B: DynAlloc + ?Sized> Drop for DoubleArena<A, B> {
+    fn drop(&mut self) {
+        self.clear();
+    }
+}
+
+impl<T: DynAlloc + ?Sized> Index<Handle<T>> for ArenaWithoutIndex<T> {
     type Output = T;
 
     fn index(&self, handle: Handle<T>) -> &Self::Output {
@@ -344,44 +388,11 @@ impl<T: DynAlloc + ?Sized> Index<Handle<T>> for Arena<T> {
     }
 }
 
-impl<T: DynAlloc + ?Sized> Drop for Arena<T> {
-    fn drop(&mut self) {
-        let total = self.next_index.load(Ordering::Acquire) as usize;
-        if total == 0 {
-            return; // No objects allocated
-        }
+impl<T: DynAlloc + ?Sized> Index<Handle<T>> for Arena<T> {
+    type Output = T;
 
-        let mut chunks_guard = self.chunks.write();
-        let chunks = mem::take(&mut *chunks_guard); // Take ownership of the chunks
-
-        if chunks.is_empty() {
-            return;
-        }
-
-        let item_size = T::size_aligned(self.metadata);
-        let item_align = T::ALIGN;
-
-        // Drop each allocated object in reverse order (from last to first)
-        for i in (0..total).rev() {
-            let chunk_index = i / self.chunk_size;
-            let offset = i % self.chunk_size;
-            let chunk = &chunks[chunk_index];
-            let ptr = unsafe { chunk.get_raw(item_size, offset) };
-            let ptr_to_t: *mut T =
-                ptr::from_raw_parts_mut(ptr as *mut (), T::ptr_metadata(self.metadata));
-            unsafe {
-                ptr::drop_in_place(ptr_to_t);
-            }
-        }
-
-        // Deallocate each chunk
-        for chunk in chunks {
-            let layout = Layout::from_size_align(item_size * self.chunk_size, item_align)
-                .expect("Invalid layout");
-            unsafe {
-                alloc::alloc::dealloc(chunk.ptr.as_ptr(), layout);
-            }
-        }
+    fn index(&self, handle: Handle<T>) -> &Self::Output {
+        &self.arena[handle]
     }
 }
 
@@ -476,20 +487,8 @@ mod tests {
     }
 
     #[test]
-    fn handle_operations() {
-        let arena = Arena::<TestStruct>::new(2, ());
-        let handle = arena.alloc(10);
-        let invalid = Handle::<TestStruct>::invalid();
-
-        assert!(handle.is_valid());
-        assert!(!invalid.is_valid());
-        assert_eq!(handle.clone(), handle); // Test clone
-        assert_eq!(*handle, handle.index); // Test deref
-    }
-
-    #[test]
     fn clear_operation_and_drop_arena() {
-        let arena = Arena::<DropTest>::new(2, ());
+        let mut arena = Arena::<DropTest>::new(2, ());
         let _ = arena.alloc(1);
         let _ = arena.alloc(2);
 
