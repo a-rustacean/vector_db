@@ -27,6 +27,11 @@ pub struct QuantVec {
     vec: [u8],
 }
 
+#[repr(C, align(4))]
+pub struct RawVec {
+    vec: [f32],
+}
+
 impl DynAlloc for QuantVec {
     type Metadata = (Quantization, u16);
 
@@ -42,6 +47,22 @@ impl DynAlloc for QuantVec {
     fn ptr_metadata((quantization, len): Self::Metadata) -> <Self as Pointee>::Metadata {
         let multiplier = quantization.size();
         len as usize * multiplier
+    }
+}
+
+impl DynAlloc for RawVec {
+    type Metadata = u16;
+
+    const ALIGN: usize = 4;
+
+    #[inline]
+    fn size(len: Self::Metadata) -> usize {
+        4 * len as usize
+    }
+
+    #[inline]
+    fn ptr_metadata(len: Self::Metadata) -> <Self as Pointee>::Metadata {
+        len as usize
     }
 }
 
@@ -80,6 +101,14 @@ impl DynInit for QuantVec {
                 ptr::copy_nonoverlapping(raw_vec_ptr, vec_ptr, len as usize);
             }
         }
+    }
+}
+
+impl DynInit for RawVec {
+    type Args = *const f32;
+
+    unsafe fn new_at(ptr: *mut u8, metadata: Self::Metadata, args: Self::Args) {
+        ptr::copy_nonoverlapping(args, ptr as *mut f32, metadata as usize);
     }
 }
 
