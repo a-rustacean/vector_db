@@ -48,33 +48,13 @@ impl<T: DynAlloc + ?Sized> Chunk<T> {
         &*ptr::from_raw_parts(self.ptr.as_ptr().add(item_size * index), metadata)
     }
 
-    unsafe fn init(&self, item_size: usize, index: usize, metadata: T::Metadata, args: T::Args)
-    where
-        T: DynInit,
-    {
+    unsafe fn init(&self, item_size: usize, index: usize, metadata: T::Metadata, args: T::Args) {
         T::new_at(self.get_raw(item_size, index), metadata, args);
-    }
-
-    unsafe fn init_default(&self, item_size: usize, index: usize, metadata: T::Metadata)
-    where
-        T: DynDefault,
-    {
-        T::default_at(self.get_raw(item_size, index), metadata);
     }
 }
 
 unsafe impl<T: Send + DynAlloc + ?Sized> Send for Chunk<T> {}
 unsafe impl<T: Sync + DynAlloc + ?Sized> Sync for Chunk<T> {}
-
-pub trait DynInit: DynAlloc {
-    type Args;
-
-    unsafe fn new_at(ptr: *mut u8, metadata: Self::Metadata, args: Self::Args);
-}
-
-pub trait DynDefault: DynAlloc {
-    unsafe fn default_at(ptr: *mut u8, metadata: Self::Metadata);
-}
 
 fn align_up(size: usize, alignment: usize) -> usize {
     debug_assert!(alignment != 0, "Alignment must be non-zero");
@@ -89,6 +69,7 @@ fn align_up(size: usize, alignment: usize) -> usize {
 
 pub trait DynAlloc {
     type Metadata: Clone + Copy;
+    type Args;
 
     const ALIGN: usize;
 
@@ -101,26 +82,8 @@ pub trait DynAlloc {
     }
 
     fn ptr_metadata(metadata: Self::Metadata) -> <Self as Pointee>::Metadata;
-}
 
-// impl for all Sized types
-impl<T> DynAlloc for T {
-    type Metadata = ();
-    const ALIGN: usize = align_of::<T>();
-
-    fn size(_metadata: Self::Metadata) -> usize {
-        size_of::<T>()
-    }
-
-    fn ptr_metadata(_metadata: Self::Metadata) -> <Self as Pointee>::Metadata {}
-}
-
-impl<T: Default> DynDefault for T {
-    unsafe fn default_at(ptr: *mut u8, _metadata: ()) {
-        let default = Self::default();
-
-        (ptr as *mut Self).write(default);
-    }
+    unsafe fn new_at(ptr: *mut u8, metadata: Self::Metadata, args: Self::Args);
 }
 
 pub struct ArenaWithoutIndex<T: DynAlloc + ?Sized> {
@@ -149,10 +112,7 @@ impl<T: DynAlloc + ?Sized> ArenaWithoutIndex<T> {
         }
     }
 
-    pub fn alloc(&self, index: u32, args: T::Args) -> Handle<T>
-    where
-        T: DynInit,
-    {
+    pub fn alloc(&self, index: u32, args: T::Args) -> Handle<T> {
         let chunk_index = index as usize / self.chunk_size;
         let offset = index as usize % self.chunk_size;
 
@@ -174,36 +134,6 @@ impl<T: DynAlloc + ?Sized> ArenaWithoutIndex<T> {
         let chunk = &chunks_guard[chunk_index];
         unsafe {
             chunk.init(T::size_aligned(self.metadata), offset, self.metadata, args);
-        }
-
-        Handle::new(index)
-    }
-
-    pub fn alloc_default(&self, index: u32) -> Handle<T>
-    where
-        T: DynDefault,
-    {
-        let chunk_index = index as usize / self.chunk_size;
-        let offset = index as usize % self.chunk_size;
-
-        let chunks_guard = self.chunks.read();
-
-        let chunks_guard = if chunk_index >= chunks_guard.len() {
-            drop(chunks_guard);
-            let mut chunks_guard = self.chunks.write();
-            while chunk_index >= chunks_guard.len() {
-                chunks_guard.push(unsafe {
-                    Chunk::new(T::size_aligned(self.metadata), T::ALIGN, self.chunk_size)
-                });
-            }
-            RwLockWriteGuard::downgrade(chunks_guard)
-        } else {
-            chunks_guard
-        };
-
-        let chunk = &chunks_guard[chunk_index];
-        unsafe {
-            chunk.init_default(T::size_aligned(self.metadata), offset, self.metadata);
         }
 
         Handle::new(index)
@@ -263,24 +193,10 @@ impl<T: DynAlloc + ?Sized> Arena<T> {
         }
     }
 
-    pub fn alloc(&self, args: T::Args) -> Handle<T>
-    where
-        T: DynInit,
-    {
+    pub fn alloc(&self, args: T::Args) -> Handle<T> {
         let index = self.next_index.fetch_add(1, Ordering::Relaxed);
 
         self.arena.alloc(index, args);
-
-        Handle::new(index)
-    }
-
-    pub fn alloc_default(&self) -> Handle<T>
-    where
-        T: DynDefault,
-    {
-        let index = self.next_index.fetch_add(1, Ordering::Relaxed);
-
-        self.arena.alloc_default(index);
 
         Handle::new(index)
     }
@@ -313,28 +229,11 @@ impl<A: DynAlloc + ?Sized, B: DynAlloc + ?Sized> DoubleArena<A, B> {
         }
     }
 
-    pub fn alloc(&self, args_a: A::Args, args_b: B::Args) -> DoubleHandle<A, B>
-    where
-        A: DynInit,
-        B: DynInit,
-    {
+    pub fn alloc(&self, args_a: A::Args, args_b: B::Args) -> DoubleHandle<A, B> {
         let index = self.next_index.fetch_add(1, Ordering::Relaxed);
 
         self.arena_a.alloc(index, args_a);
         self.arena_b.alloc(index, args_b);
-
-        DoubleHandle::new(index)
-    }
-
-    pub fn alloc_default(&self) -> DoubleHandle<A, B>
-    where
-        A: DynDefault,
-        B: DynDefault,
-    {
-        let index = self.next_index.fetch_add(1, Ordering::Relaxed);
-
-        self.arena_a.alloc_default(index);
-        self.arena_b.alloc_default(index);
 
         DoubleHandle::new(index)
     }
@@ -414,8 +313,19 @@ mod tests {
         }
     }
 
-    impl DynInit for TestStruct {
+    impl DynAlloc for TestStruct {
+        type Metadata = ();
         type Args = u32;
+
+        const ALIGN: usize = align_of::<Self>();
+
+        fn size(_metadata: Self::Metadata) -> usize {
+            size_of::<Self>()
+        }
+
+        fn ptr_metadata(_metadata: Self::Metadata) -> <Self as Pointee>::Metadata {
+            ()
+        }
 
         unsafe fn new_at(ptr: *mut u8, _metadata: (), args: Self::Args) {
             ptr::write(ptr as *mut Self, Self { value: args });
@@ -448,8 +358,19 @@ mod tests {
         }
     }
 
-    impl DynInit for DropTest {
+    impl DynAlloc for DropTest {
+        type Metadata = ();
         type Args = u32;
+
+        const ALIGN: usize = align_of::<Self>();
+
+        fn size(_metadata: Self::Metadata) -> usize {
+            size_of::<Self>()
+        }
+
+        fn ptr_metadata(_metadata: Self::Metadata) -> <Self as Pointee>::Metadata {
+            ()
+        }
 
         unsafe fn new_at(ptr: *mut u8, _metadata: (), args: Self::Args) {
             ptr::write(ptr as *mut Self, Self::new(args));
@@ -465,14 +386,6 @@ mod tests {
         assert_eq!(arena[handle1].value, 10);
         assert_eq!(arena[handle2].value, 20);
         assert_eq!(arena.len(), 2);
-    }
-
-    #[test]
-    fn default_initialization() {
-        let arena = Arena::<TestStruct>::new(2, ());
-        let handle = arena.alloc_default();
-
-        assert_eq!(arena[handle].value, 42);
     }
 
     #[test]

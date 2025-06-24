@@ -1,6 +1,6 @@
 use core::ptr::{self, Pointee};
 
-use crate::arena::{DynAlloc, DynInit};
+use crate::arena::DynAlloc;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Quantization {
@@ -34,6 +34,7 @@ pub struct RawVec {
 
 impl DynAlloc for QuantVec {
     type Metadata = (Quantization, u16);
+    type Args = *const f32;
 
     const ALIGN: usize = 4;
 
@@ -48,26 +49,6 @@ impl DynAlloc for QuantVec {
         let multiplier = quantization.size();
         len as usize * multiplier
     }
-}
-
-impl DynAlloc for RawVec {
-    type Metadata = u16;
-
-    const ALIGN: usize = 4;
-
-    #[inline]
-    fn size(len: Self::Metadata) -> usize {
-        4 * len as usize
-    }
-
-    #[inline]
-    fn ptr_metadata(len: Self::Metadata) -> <Self as Pointee>::Metadata {
-        len as usize
-    }
-}
-
-impl DynInit for QuantVec {
-    type Args = *const f32;
 
     unsafe fn new_at(ptr: *mut u8, (quantization, len): Self::Metadata, raw_vec_ptr: Self::Args) {
         let raw_vec_ref: &[f32] = &*ptr::from_raw_parts(raw_vec_ptr, len as usize);
@@ -104,8 +85,21 @@ impl DynInit for QuantVec {
     }
 }
 
-impl DynInit for RawVec {
+impl DynAlloc for RawVec {
+    type Metadata = u16;
     type Args = *const f32;
+
+    const ALIGN: usize = 4;
+
+    #[inline]
+    fn size(len: Self::Metadata) -> usize {
+        4 * len as usize
+    }
+
+    #[inline]
+    fn ptr_metadata(len: Self::Metadata) -> <Self as Pointee>::Metadata {
+        len as usize
+    }
 
     unsafe fn new_at(ptr: *mut u8, metadata: Self::Metadata, args: Self::Args) {
         ptr::copy_nonoverlapping(args, ptr as *mut f32, metadata as usize);

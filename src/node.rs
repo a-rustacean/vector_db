@@ -1,11 +1,7 @@
 use core::cmp::Ordering;
 
 use crate::{
-    arena::{DynAlloc, DynDefault, DynInit},
-    handle::Handle,
-    metric::DistanceMetric,
-    rwlock::RwLock,
-    storage::QuantVec,
+    arena::DynAlloc, handle::Handle, metric::DistanceMetric, rwlock::RwLock, storage::QuantVec,
 };
 
 pub type VecHandle = Handle<QuantVec>;
@@ -155,6 +151,8 @@ pub struct Neighbor0 {
 
 impl DynAlloc for Node {
     type Metadata = u16;
+    type Args = (VecHandle, NodeHandle);
+
     const ALIGN: usize = 4;
 
     fn size(metadata: u16) -> usize {
@@ -164,21 +162,19 @@ impl DynAlloc for Node {
     fn ptr_metadata(len: u16) -> <Self as core::ptr::Pointee>::Metadata {
         len as usize
     }
-}
-
-impl DynInit for Node {
-    type Args = (VecHandle, NodeHandle);
 
     unsafe fn new_at(ptr: *mut u8, len: u16, (vec, child): Self::Args) {
         (ptr as *mut VecHandle).write(vec);
         (ptr.add(4) as *mut NodeHandle).write(child);
         ptr.add(8).write(0);
-        Neighbors::default_at(ptr.add(12), len);
+        Neighbors::new_at(ptr.add(12), len, ());
     }
 }
 
 impl DynAlloc for Node0 {
     type Metadata = u16;
+    type Args = VecHandle;
+
     const ALIGN: usize = 4;
 
     fn size(metadata: u16) -> usize {
@@ -188,20 +184,18 @@ impl DynAlloc for Node0 {
     fn ptr_metadata(len: u16) -> <Self as core::ptr::Pointee>::Metadata {
         len as usize
     }
-}
-
-impl DynInit for Node0 {
-    type Args = VecHandle;
 
     unsafe fn new_at(ptr: *mut u8, len: u16, vec: Self::Args) {
         (ptr as *mut VecHandle).write(vec);
         ptr.add(4).write(0);
-        Neighbors0::default_at(ptr.add(8), len);
+        Neighbors0::new_at(ptr.add(8), len, ());
     }
 }
 
 impl DynAlloc for Neighbors {
     type Metadata = u16;
+    type Args = ();
+
     const ALIGN: usize = 4;
 
     fn size(len: u16) -> usize {
@@ -211,16 +205,16 @@ impl DynAlloc for Neighbors {
     fn ptr_metadata(len: u16) -> <Self as core::ptr::Pointee>::Metadata {
         len as usize
     }
-}
 
-impl DynDefault for Neighbors {
-    unsafe fn default_at(ptr: *mut u8, len: u16) {
+    unsafe fn new_at(ptr: *mut u8, len: u16, _args: ()) {
         ptr.write_bytes(0, Self::size_aligned(len));
     }
 }
 
 impl DynAlloc for Neighbors0 {
     type Metadata = u16;
+    type Args = ();
+
     const ALIGN: usize = 4;
 
     fn size(len: u16) -> usize {
@@ -230,15 +224,11 @@ impl DynAlloc for Neighbors0 {
     fn ptr_metadata(len: u16) -> <Self as core::ptr::Pointee>::Metadata {
         len as usize
     }
-}
 
-impl DynDefault for Neighbors0 {
-    unsafe fn default_at(ptr: *mut u8, metadata: Self::Metadata) {
+    unsafe fn new_at(ptr: *mut u8, metadata: Self::Metadata, _args: ()) {
         ptr.write_bytes(0, Self::size_aligned(metadata));
     }
 }
-
-// Add to the end of node.rs
 
 #[cfg(test)]
 mod tests {

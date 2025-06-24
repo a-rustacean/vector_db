@@ -8,7 +8,7 @@ use alloc::{
 use binary_heap_plus::BinaryHeap;
 
 use crate::{
-    arena::{Arena, DynAlloc, DynInit},
+    arena::{Arena, DynAlloc},
     fixedset::FixedSet,
     handle::Handle,
     metric::{DistanceMetric, DistanceMetricKind},
