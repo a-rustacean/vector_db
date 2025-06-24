@@ -49,6 +49,12 @@ impl<T: ?Sized> Deref for Handle<T> {
     }
 }
 
+impl<T: ?Sized> core::hash::Hash for Handle<T> {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.index.hash(state);
+    }
+}
+
 impl<T: ?Sized> PartialEq for Handle<T> {
     fn eq(&self, other: &Self) -> bool {
         self.index == other.index
@@ -121,6 +127,9 @@ impl<T: DynAlloc + ?Sized> Chunk<T> {
         T::default_at(self.get_raw(item_size, index), metadata);
     }
 }
+
+unsafe impl<T: Send + DynAlloc + ?Sized> Send for Chunk<T> {}
+unsafe impl<T: Sync + DynAlloc + ?Sized> Sync for Chunk<T> {}
 
 pub trait DynInit: DynAlloc {
     type Args;
