@@ -77,7 +77,7 @@ impl Graph {
             dims,
             levels,
             quantization,
-            distance_metric: DistanceMetric::new(metric, quantization, dims),
+            distance_metric: DistanceMetric::new(metric, quantization),
             nodes_arena,
             nodes0_arena,
             vec_arena,

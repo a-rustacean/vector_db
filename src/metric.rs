@@ -14,16 +14,11 @@ pub enum DistanceMetricKind {
 pub struct DistanceMetric {
     kind: DistanceMetricKind,
     quantization: Quantization,
-    len: u16,
 }
 
 impl DistanceMetric {
-    pub fn new(kind: DistanceMetricKind, quantization: Quantization, len: u16) -> Self {
-        Self {
-            kind,
-            quantization,
-            len,
-        }
+    pub fn new(kind: DistanceMetricKind, quantization: Quantization) -> Self {
+        Self { kind, quantization }
     }
 
     pub fn calculate(&self, _a: &QuantVec, _b: &QuantVec) -> f32 {
