@@ -1,3 +1,5 @@
+#![allow(unsafe_op_in_unsafe_fn)]
+
 use parking_lot::lock_api;
 
 use super::raw_mutex::{TOKEN_HANDOFF, TOKEN_NORMAL};

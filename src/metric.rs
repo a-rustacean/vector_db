@@ -1,8 +1,9 @@
 use core::{cmp::Ordering, f32};
 
-use crate::storage::{QuantVec, Quantization};
+use crate::storage::{QuantVec, Quantization, RawVec};
 
 #[derive(Debug, Clone, Copy)]
+#[repr(u8)]
 pub enum DistanceMetricKind {
     Cosine,
     Euclidean,
@@ -10,7 +11,6 @@ pub enum DistanceMetricKind {
     DotProduct,
 }
 
-#[allow(unused)]
 pub struct DistanceMetric {
     kind: DistanceMetricKind,
     quantization: Quantization,
@@ -22,6 +22,10 @@ impl DistanceMetric {
     }
 
     pub fn calculate(&self, _a: &QuantVec, _b: &QuantVec) -> f32 {
+        todo!()
+    }
+
+    pub fn calculate_raw(&self, _a: &RawVec, _b: &RawVec) -> f32 {
         todo!()
     }
 

@@ -13,7 +13,7 @@ use alloc::{
 };
 use parking_lot::{RwLock, RwLockWriteGuard};
 
-use crate::handle::{DoubleHandle, Handle};
+use crate::handle::{DoubleHandle, Handle, HandleA, HandleB};
 
 struct Chunk<T: DynAlloc + ?Sized> {
     ptr: NonNull<u8>,
@@ -22,21 +22,22 @@ struct Chunk<T: DynAlloc + ?Sized> {
 
 impl<T: DynAlloc + ?Sized> Chunk<T> {
     unsafe fn new(item_size: usize, item_align: usize, chunk_size: usize) -> Self {
-        let layout = Layout::from_size_align_unchecked(item_size * chunk_size, item_align);
-        let ptr = alloc(layout);
+        let layout =
+            unsafe { Layout::from_size_align_unchecked(item_size * chunk_size, item_align) };
+        let ptr = unsafe { alloc(layout) };
 
         if ptr.is_null() {
             handle_alloc_error(layout)
         }
 
         Self {
-            ptr: NonNull::new_unchecked(ptr),
+            ptr: unsafe { NonNull::new_unchecked(ptr) },
             _marker: PhantomData,
         }
     }
 
     unsafe fn get_raw(&self, item_size: usize, index: usize) -> *mut u8 {
-        self.ptr.as_ptr().add(item_size * index)
+        unsafe { self.ptr.as_ptr().add(item_size * index) }
     }
 
     unsafe fn get_ref<'a>(
@@ -45,11 +46,13 @@ impl<T: DynAlloc + ?Sized> Chunk<T> {
         index: usize,
         metadata: <T as Pointee>::Metadata,
     ) -> &'a T {
-        &*ptr::from_raw_parts(self.ptr.as_ptr().add(item_size * index), metadata)
+        unsafe { &*ptr::from_raw_parts(self.ptr.as_ptr().add(item_size * index), metadata) }
     }
 
     unsafe fn init(&self, item_size: usize, index: usize, metadata: T::Metadata, args: T::Args) {
-        T::new_at(self.get_raw(item_size, index), metadata, args);
+        unsafe {
+            T::new_at(self.get_raw(item_size, index), metadata, args);
+        }
     }
 }
 
@@ -97,6 +100,7 @@ pub struct Arena<T: DynAlloc + ?Sized> {
     next_index: AtomicU32,
 }
 
+#[allow(unused)]
 pub struct DoubleArena<A: DynAlloc + ?Sized, B: DynAlloc + ?Sized> {
     arena_a: ArenaWithoutIndex<A>,
     arena_b: ArenaWithoutIndex<B>,
@@ -220,6 +224,7 @@ impl<T: DynAlloc + ?Sized> Arena<T> {
     }
 }
 
+#[allow(unused)]
 impl<A: DynAlloc + ?Sized, B: DynAlloc + ?Sized> DoubleArena<A, B> {
     pub fn new(chunk_size: usize, metadata_a: A::Metadata, metadata_b: B::Metadata) -> Self {
         Self {
@@ -295,6 +300,22 @@ impl<T: DynAlloc + ?Sized> Index<Handle<T>> for Arena<T> {
     }
 }
 
+impl<A: DynAlloc + ?Sized, B: DynAlloc + ?Sized> Index<HandleA<A>> for DoubleArena<A, B> {
+    type Output = A;
+
+    fn index(&self, handle: HandleA<A>) -> &Self::Output {
+        &self.arena_a[handle.cast()]
+    }
+}
+
+impl<A: DynAlloc + ?Sized, B: DynAlloc + ?Sized> Index<HandleB<B>> for DoubleArena<A, B> {
+    type Output = B;
+
+    fn index(&self, handle: HandleB<B>) -> &Self::Output {
+        &self.arena_b[handle.cast()]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,7 +349,9 @@ mod tests {
         }
 
         unsafe fn new_at(ptr: *mut u8, _metadata: (), args: Self::Args) {
-            ptr::write(ptr as *mut Self, Self { value: args });
+            unsafe {
+                ptr::write(ptr as *mut Self, Self { value: args });
+            }
         }
     }
 
@@ -373,7 +396,9 @@ mod tests {
         }
 
         unsafe fn new_at(ptr: *mut u8, _metadata: (), args: Self::Args) {
-            ptr::write(ptr as *mut Self, Self::new(args));
+            unsafe {
+                ptr::write(ptr as *mut Self, Self::new(args));
+            }
         }
     }
 

@@ -1,5 +1,4 @@
 #![no_std]
-#![allow(unsafe_op_in_unsafe_fn)]
 #![feature(ptr_metadata, f16, new_zeroed_alloc)]
 
 extern crate alloc;
@@ -14,7 +13,9 @@ mod rwlock;
 mod storage;
 mod util;
 
-pub use graph::{Graph, SearchResult};
+pub use graph::{Graph, InternalSearchResult};
 pub use metric::DistanceMetricKind;
-pub use node::VecHandle as NodeId;
 pub use storage::Quantization;
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct NodeId(pub u32);

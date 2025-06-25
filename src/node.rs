@@ -1,10 +1,14 @@
 use core::cmp::Ordering;
 
 use crate::{
-    arena::DynAlloc, handle::Handle, metric::DistanceMetric, rwlock::RwLock, storage::QuantVec,
+    arena::DynAlloc,
+    handle::{DoubleHandle, Handle},
+    metric::DistanceMetric,
+    rwlock::RwLock,
+    storage::{QuantVec, RawVec},
 };
 
-pub type VecHandle = Handle<QuantVec>;
+pub type VecHandle = DoubleHandle<RawVec, QuantVec>;
 pub type NodeHandle = Handle<Node>;
 pub type Node0Handle = Handle<Node0>;
 
@@ -164,10 +168,12 @@ impl DynAlloc for Node {
     }
 
     unsafe fn new_at(ptr: *mut u8, len: u16, (vec, child): Self::Args) {
-        (ptr as *mut VecHandle).write(vec);
-        (ptr.add(4) as *mut NodeHandle).write(child);
-        ptr.add(8).write(0);
-        Neighbors::new_at(ptr.add(12), len, ());
+        unsafe {
+            (ptr as *mut VecHandle).write(vec);
+            (ptr.add(4) as *mut NodeHandle).write(child);
+            ptr.add(8).write(0);
+            Neighbors::new_at(ptr.add(12), len, ());
+        }
     }
 }
 
@@ -186,9 +192,11 @@ impl DynAlloc for Node0 {
     }
 
     unsafe fn new_at(ptr: *mut u8, len: u16, vec: Self::Args) {
-        (ptr as *mut VecHandle).write(vec);
-        ptr.add(4).write(0);
-        Neighbors0::new_at(ptr.add(8), len, ());
+        unsafe {
+            (ptr as *mut VecHandle).write(vec);
+            ptr.add(4).write(0);
+            Neighbors0::new_at(ptr.add(8), len, ());
+        }
     }
 }
 
@@ -207,7 +215,9 @@ impl DynAlloc for Neighbors {
     }
 
     unsafe fn new_at(ptr: *mut u8, len: u16, _args: ()) {
-        ptr.write_bytes(0, Self::size_aligned(len));
+        unsafe {
+            ptr.write_bytes(0, Self::size_aligned(len));
+        }
     }
 }
 
@@ -226,7 +236,9 @@ impl DynAlloc for Neighbors0 {
     }
 
     unsafe fn new_at(ptr: *mut u8, metadata: Self::Metadata, _args: ()) {
-        ptr.write_bytes(0, Self::size_aligned(metadata));
+        unsafe {
+            ptr.write_bytes(0, Self::size_aligned(metadata));
+        }
     }
 }
 

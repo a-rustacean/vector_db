@@ -30,10 +30,12 @@ where
     // Process each element
     for i in 0..len {
         // SAFETY: Valid index in allocated memory
-        let t = ptr::read(data_ptr.add(i));
+        let t = unsafe { ptr::read(data_ptr.add(i)) };
         let u = f(t);
         // SAFETY: Same layout as T, memory is initialized
-        ptr::write(data_ptr.add(i) as *mut U, u);
+        unsafe {
+            ptr::write(data_ptr.add(i) as *mut U, u);
+        }
     }
 
     // Prevent guard from running (success case)
@@ -41,7 +43,7 @@ where
 
     // Reconstruct as Box<[U]>
     // SAFETY: We've initialized all elements as U with correct layout
-    Box::from_raw(ptr::slice_from_raw_parts_mut(data_ptr as *mut U, len))
+    unsafe { Box::from_raw(ptr::slice_from_raw_parts_mut(data_ptr as *mut U, len)) }
 }
 
 // Guard for panic safety: deallocates memory without dropping elements

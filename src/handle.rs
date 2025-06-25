@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use core::{fmt, hash, marker::PhantomData, ops::Deref};
 
 use alloc::format;
@@ -92,6 +94,14 @@ impl<A: ?Sized, B: ?Sized> DoubleHandle<A, B> {
     pub fn split(self) -> (HandleA<A>, HandleB<B>) {
         (HandleA::new(self.index), HandleB::new(self.index))
     }
+
+    pub fn handle_a(self) -> HandleA<A> {
+        HandleA::new(self.index)
+    }
+
+    pub fn handle_b(self) -> HandleB<B> {
+        HandleB::new(self.index)
+    }
 }
 
 impl<A: ?Sized, B: ?Sized> Deref for DoubleHandle<A, B> {
@@ -157,8 +167,8 @@ impl<T: ?Sized> HandleA<T> {
         self.index != u32::MAX
     }
 
-    pub fn cast<U: ?Sized>(self) -> HandleA<U> {
-        HandleA::new(self.index)
+    pub fn cast<U: ?Sized>(self) -> Handle<U> {
+        Handle::new(self.index)
     }
 
     pub fn into_double<U: ?Sized>(self) -> DoubleHandle<T, U> {
@@ -225,8 +235,8 @@ impl<T: ?Sized> HandleB<T> {
         self.index != u32::MAX
     }
 
-    pub fn cast<U: ?Sized>(self) -> HandleB<U> {
-        HandleB::new(self.index)
+    pub fn cast<U: ?Sized>(self) -> Handle<U> {
+        Handle::new(self.index)
     }
 
     pub fn into_double<U: ?Sized>(self) -> DoubleHandle<T, U> {

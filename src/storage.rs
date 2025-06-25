@@ -3,6 +3,7 @@ use core::ptr::{self, Pointee};
 use crate::arena::DynAlloc;
 
 #[derive(Debug, Clone, Copy)]
+#[repr(u8)]
 pub enum Quantization {
     SignedByte,
     UnsignedByte,
@@ -12,7 +13,7 @@ pub enum Quantization {
 
 impl Quantization {
     #[inline]
-    fn size(&self) -> usize {
+    pub(crate) fn size(&self) -> usize {
         match self {
             Self::SignedByte | Self::UnsignedByte => 1,
             Self::HalfPrecisionFP => 2,
@@ -51,35 +52,45 @@ impl DynAlloc for QuantVec {
     }
 
     unsafe fn new_at(ptr: *mut u8, (quantization, len): Self::Metadata, raw_vec_ptr: Self::Args) {
-        let raw_vec_ref: &[f32] = &*ptr::from_raw_parts(raw_vec_ptr, len as usize);
+        let raw_vec_ref: &[f32] = unsafe { &*ptr::from_raw_parts(raw_vec_ptr, len as usize) };
         let mag = raw_vec_ref.iter().map(|dim| dim * dim).sum::<f32>().sqrt();
-        (ptr as *mut f32).write(mag);
+        unsafe {
+            (ptr as *mut f32).write(mag);
+        }
 
-        let vec_ptr = ptr.add(4);
+        let vec_ptr = unsafe { ptr.add(4) };
 
         match quantization {
             Quantization::SignedByte => {
                 let vec_ptr = vec_ptr as *mut i8;
                 for (i, dim) in raw_vec_ref.iter().enumerate() {
-                    vec_ptr
-                        .add(i)
-                        .write((dim * 127.0).clamp(-128.0, 127.0) as i8);
+                    unsafe {
+                        vec_ptr
+                            .add(i)
+                            .write((dim * 127.0).clamp(-128.0, 127.0) as i8);
+                    }
                 }
             }
             Quantization::UnsignedByte => {
                 for (i, dim) in raw_vec_ref.iter().enumerate() {
-                    vec_ptr.add(i).write((dim * 255.0).clamp(0.0, 255.0) as u8);
+                    unsafe {
+                        vec_ptr.add(i).write((dim * 255.0).clamp(0.0, 255.0) as u8);
+                    }
                 }
             }
             Quantization::HalfPrecisionFP => {
                 let vec_ptr = vec_ptr as *mut f16;
                 for (i, dim) in raw_vec_ref.iter().enumerate() {
-                    vec_ptr.add(i).write(*dim as f16);
+                    unsafe {
+                        vec_ptr.add(i).write(*dim as f16);
+                    }
                 }
             }
             Quantization::FullPrecisionFP => {
                 let vec_ptr = vec_ptr as *mut f32;
-                ptr::copy_nonoverlapping(raw_vec_ptr, vec_ptr, len as usize);
+                unsafe {
+                    ptr::copy_nonoverlapping(raw_vec_ptr, vec_ptr, len as usize);
+                }
             }
         }
     }
@@ -102,7 +113,9 @@ impl DynAlloc for RawVec {
     }
 
     unsafe fn new_at(ptr: *mut u8, metadata: Self::Metadata, args: Self::Args) {
-        ptr::copy_nonoverlapping(args, ptr as *mut f32, metadata as usize);
+        unsafe {
+            ptr::copy_nonoverlapping(args, ptr as *mut f32, metadata as usize);
+        }
     }
 }
 
