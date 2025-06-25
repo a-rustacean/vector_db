@@ -7,6 +7,7 @@ mod arena;
 mod fixedset;
 mod graph;
 mod handle;
+mod mem_project;
 mod metric;
 mod node;
 mod rwlock;
@@ -14,6 +15,7 @@ mod storage;
 mod util;
 
 pub use graph::{Graph, InternalSearchResult};
+pub use mem_project::mem_project;
 pub use metric::DistanceMetricKind;
 pub use storage::Quantization;
 
