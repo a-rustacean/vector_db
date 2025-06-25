@@ -344,9 +344,7 @@ mod tests {
             size_of::<Self>()
         }
 
-        fn ptr_metadata(_metadata: Self::Metadata) -> <Self as Pointee>::Metadata {
-            ()
-        }
+        fn ptr_metadata(_metadata: Self::Metadata) -> <Self as Pointee>::Metadata {}
 
         unsafe fn new_at(ptr: *mut u8, _metadata: (), args: Self::Args) {
             unsafe {
@@ -391,9 +389,7 @@ mod tests {
             size_of::<Self>()
         }
 
-        fn ptr_metadata(_metadata: Self::Metadata) -> <Self as Pointee>::Metadata {
-            ()
-        }
+        fn ptr_metadata(_metadata: Self::Metadata) -> <Self as Pointee>::Metadata {}
 
         unsafe fn new_at(ptr: *mut u8, _metadata: (), args: Self::Args) {
             unsafe {
