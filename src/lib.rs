@@ -10,6 +10,7 @@ mod handle;
 mod mem_project;
 mod metric;
 mod node;
+mod random;
 mod rwlock;
 mod storage;
 mod util;

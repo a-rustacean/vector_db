@@ -14,6 +14,7 @@ use crate::{
     handle::{DoubleHandle, Handle},
     metric::{DistanceMetric, DistanceMetricKind},
     node::{Neighbor, Neighbor0, Node, Node0, Node0Handle, NodeHandle, VecHandle},
+    random::{AtomicRng, exponential_random},
     storage::{QuantVec, Quantization, RawVec},
     util::map_boxed_slice,
 };
@@ -29,6 +30,7 @@ pub struct Graph {
     nodes0_arena: Arena<Node0>,
     vec_arena: DoubleArena<RawVec, QuantVec>,
     top_level_root_node: NodeHandle,
+    rng: AtomicRng,
 }
 
 #[repr(C, align(4))]
@@ -90,15 +92,15 @@ impl Graph {
             nodes0_arena,
             vec_arena,
             top_level_root_node: prev_node,
+            rng: AtomicRng::new(42),
         }
     }
 
-    pub fn index(&self, vec: &[f32], ef: u16) -> VecHandle {
+    pub fn index(&self, vec: &[f32], ef: u16) -> NodeId {
         let vec_handle = self.vec_arena.alloc(vec.as_ptr(), vec.as_ptr());
         let vec = &self.vec_arena[vec_handle.handle_b()];
 
-        // TODO(a-rustacean): fix
-        let max_level = self.levels;
+        let max_level = exponential_random(&self.rng, 0.4, self.levels);
 
         self.index_level(
             vec_handle,
@@ -109,7 +111,7 @@ impl Graph {
             ef,
         );
 
-        vec_handle
+        NodeId(*vec_handle)
     }
 
     fn index_level(
