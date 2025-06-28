@@ -65,11 +65,10 @@ impl Neighbors {
             }
         } else {
             self.neighbors[self.lowest_index as usize] = Neighbor { node, score };
+            self.lowest_index += 1;
             if self.lowest_index as usize == self.neighbors.len() {
                 self.neighbors_full = true;
                 self.recompute_lowest_index(distance_metric);
-            } else {
-                self.lowest_index += 1;
             }
         }
     }
@@ -115,11 +114,10 @@ impl Neighbors0 {
             }
         } else {
             self.neighbors[self.lowest_index as usize] = Neighbor0 { node, score };
+            self.lowest_index += 1;
             if self.lowest_index as usize == self.neighbors.len() {
                 self.neighbors_full = true;
                 self.recompute_lowest_index(distance_metric);
-            } else {
-                self.lowest_index += 1;
             }
         }
     }
@@ -171,7 +169,7 @@ impl DynAlloc for Node {
         unsafe {
             (ptr as *mut VecHandle).write(vec);
             (ptr.add(4) as *mut NodeHandle).write(child);
-            ptr.add(8).write(0);
+            (ptr.add(8) as *mut u32).write(0);
             Neighbors::new_at(ptr.add(12), len, ());
         }
     }
@@ -194,7 +192,7 @@ impl DynAlloc for Node0 {
     unsafe fn new_at(ptr: *mut u8, len: u16, vec: Self::Args) {
         unsafe {
             (ptr as *mut VecHandle).write(vec);
-            ptr.add(4).write(0);
+            (ptr.add(4) as *mut u32).write(0);
             Neighbors0::new_at(ptr.add(8), len, ());
         }
     }
