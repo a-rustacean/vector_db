@@ -111,7 +111,7 @@ impl Graph {
             ef,
         );
 
-        NodeId(*vec_handle)
+        NodeId(*vec_handle - 1)
     }
 
     fn index_level(
@@ -124,7 +124,7 @@ impl Graph {
         ef: u16,
     ) -> NodeHandle {
         if current_level > max_level {
-            let results = self.search_level(entry_node, vec, ef, 1);
+            let results = self.search_level(entry_node, vec, ef, 1, true);
             let child = self.nodes_arena[results[0].node].child;
 
             self.index_level(vec_handle, vec, child, current_level - 1, max_level, ef)
@@ -132,7 +132,7 @@ impl Graph {
             self.index_level0(vec_handle, vec, entry_node.cast(), ef)
                 .cast()
         } else {
-            let results = self.search_level(entry_node, vec, ef, self.m);
+            let results = self.search_level(entry_node, vec, ef, self.m, true);
             let child = self.nodes_arena[results[0].node].child;
 
             let child = self.index_level(vec_handle, vec, child, current_level - 1, max_level, ef);
@@ -148,7 +148,7 @@ impl Graph {
         entry_node: Node0Handle,
         ef: u16,
     ) -> Node0Handle {
-        let results = self.search_level0(entry_node, vec, ef, self.m0);
+        let results = self.search_level0(entry_node, vec, ef, self.m0, true);
         self.create_node0(vec_handle, results)
     }
 
@@ -266,14 +266,14 @@ impl Graph {
 
         // ignore the `0..self.range`, the actual search range in (0, self.levels]
         for _ in 0..self.levels {
-            let results = self.search_level(entry_node, query, ef, top_k);
+            let results = self.search_level(entry_node, query, ef, top_k, true);
             let child = self.nodes_arena[results[0].node].child;
             entry_node = child;
         }
 
         let entry_node = entry_node.cast();
 
-        let results = self.search_level0(entry_node, query, ef, top_k);
+        let results = self.search_level0(entry_node, query, ef, top_k, false);
 
         unsafe {
             dealloc(ptr, layout);
@@ -281,7 +281,7 @@ impl Graph {
 
         unsafe {
             map_boxed_slice(results, |result| SearchResult {
-                node: NodeId(*self.nodes0_arena[result.node].vec),
+                node: NodeId(*self.nodes0_arena[result.node].vec - 1),
                 score: result.score,
             })
         }
@@ -341,6 +341,7 @@ impl Graph {
         query: &QuantVec,
         ef: u16,
         top_k: u16,
+        include_root: bool,
     ) -> Box<[InternalSearchResult<Node>]> {
         let mut candidate_queue = BinaryHeap::new_by(|a: &InternalSearchResult<Node>, b| {
             self.distance_metric.cmp_score(a.score, b.score)
@@ -367,7 +368,9 @@ impl Graph {
             }
 
             nodes_visisted += 1;
-            results.push(entry);
+            if include_root || *entry.node != 0 {
+                results.push(entry);
+            }
 
             let node = &self.nodes_arena[entry_node];
 
@@ -406,6 +409,7 @@ impl Graph {
         query: &QuantVec,
         ef: u16,
         top_k: u16,
+        include_root: bool,
     ) -> Box<[InternalSearchResult<Node0>]> {
         let mut candidate_queue = BinaryHeap::new_by(|a: &InternalSearchResult<Node0>, b| {
             self.distance_metric.cmp_score(a.score, b.score)
@@ -432,7 +436,9 @@ impl Graph {
             }
 
             nodes_visisted += 1;
-            results.push(entry);
+            if include_root || *entry.node != 0 {
+                results.push(entry);
+            }
 
             let node = &self.nodes0_arena[entry_node];
 
