@@ -1,5 +1,5 @@
 #![no_std]
-#![feature(ptr_metadata, f16, new_zeroed_alloc)]
+#![feature(ptr_metadata, f16, new_zeroed_alloc, portable_simd)]
 
 extern crate alloc;
 

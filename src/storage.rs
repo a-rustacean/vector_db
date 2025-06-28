@@ -1,6 +1,6 @@
 use core::ptr::{self, Pointee};
 
-use crate::arena::DynAlloc;
+use crate::{arena::DynAlloc, metric::dot_product_f32};
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
@@ -24,13 +24,13 @@ impl Quantization {
 
 #[repr(C, align(4))]
 pub struct QuantVec {
-    mag: f32,
+    pub(crate) mag: f32,
     vec: [u8],
 }
 
 #[repr(C, align(4))]
 pub struct RawVec {
-    vec: [f32],
+    pub(crate) vec: [f32],
 }
 
 impl DynAlloc for QuantVec {
@@ -53,7 +53,7 @@ impl DynAlloc for QuantVec {
 
     unsafe fn new_at(ptr: *mut u8, (quantization, len): Self::Metadata, raw_vec_ptr: Self::Args) {
         let raw_vec_ref: &[f32] = unsafe { &*ptr::from_raw_parts(raw_vec_ptr, len as usize) };
-        let mag = raw_vec_ref.iter().map(|dim| dim * dim).sum::<f32>().sqrt();
+        let mag = dot_product_f32(raw_vec_ref, raw_vec_ref);
         unsafe {
             (ptr as *mut f32).write(mag);
         }
@@ -128,6 +128,7 @@ impl QuantVec {
         &self.vec
     }
 
+    #[allow(unused)]
     pub fn as_half_precision_fp(&self) -> &[f16] {
         unsafe { &*ptr::from_raw_parts(&self.vec as *const [u8] as *const f16, self.vec.len() / 2) }
     }
