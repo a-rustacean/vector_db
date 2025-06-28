@@ -11,8 +11,8 @@ use crate::{
     NodeId,
     arena::{Arena, DoubleArena, DynAlloc},
     fixedset::FixedSet,
-    handle::{DoubleHandle, Handle},
-    metric::{DistanceMetric, DistanceMetricKind},
+    handle::{Handle, HandleA},
+    metric::{DistanceMetric, DistanceMetricKind, dot_product_f32},
     node::{Neighbor, Neighbor0, Node, Node0, Node0Handle, NodeHandle, VecHandle},
     random::{AtomicRng, exponential_random},
     storage::{QuantVec, Quantization, RawVec},
@@ -289,34 +289,20 @@ impl Graph {
 
     pub fn search(&self, query: &[f32], ef: u16, top_k: u16) -> Box<[SearchResult]> {
         debug_assert!((0..8192).contains(&top_k));
+        let mag_query = dot_product_f32(query, query);
         let results_quantized = self.search_quantized(query, ef, top_k * 8);
-        let results_quantized = unsafe {
-            mem::transmute::<Box<[SearchResult]>, Box<[(DoubleHandle<RawVec, QuantVec>, f32)]>>(
-                results_quantized,
-            )
-        };
+        let results_quantized =
+            unsafe { mem::transmute::<Box<[SearchResult]>, Box<[(u32, f32)]>>(results_quantized) };
+        let query = unsafe { mem::transmute::<&[f32], &RawVec>(query) };
         let mut results = Vec::with_capacity(results_quantized.len());
-        let (query, ptr, layout): (&RawVec, *mut u8, Layout) = unsafe {
-            let metadata = self.dims;
-            let size = RawVec::size_aligned(metadata);
-            let layout = Layout::from_size_align_unchecked(size, QuantVec::ALIGN);
-            let ptr = alloc(layout);
-            if ptr.is_null() {
-                handle_alloc_error(layout);
-            }
-            RawVec::new_at(ptr, metadata, query.as_ptr());
-            let query = &*ptr::from_raw_parts(ptr, RawVec::ptr_metadata(metadata));
-            (query, ptr, layout)
-        };
         for (handle, _) in results_quantized {
+            let handle_a = HandleA::new(handle + 1);
+            let vec = &self.vec_arena[handle_a];
+            let mag_vec = dot_product_f32(&vec.vec, &vec.vec);
             let score = self
                 .distance_metric
-                .calculate_raw(query, &self.vec_arena[handle.handle_a()]);
+                .calculate_raw(query, mag_query, vec, mag_vec);
             results.push((handle, score));
-        }
-
-        unsafe {
-            dealloc(ptr, layout);
         }
 
         let top_k = top_k as usize;
@@ -329,9 +315,7 @@ impl Graph {
         results.sort_unstable_by(|a, b| self.distance_metric.cmp_score(a.1, b.1));
 
         unsafe {
-            mem::transmute::<Box<[(DoubleHandle<RawVec, QuantVec>, f32)]>, Box<[SearchResult]>>(
-                results.into_boxed_slice(),
-            )
+            mem::transmute::<Box<[(u32, f32)]>, Box<[SearchResult]>>(results.into_boxed_slice())
         }
     }
 
