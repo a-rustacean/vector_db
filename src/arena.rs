@@ -100,7 +100,6 @@ pub struct Arena<T: DynAlloc + ?Sized> {
     next_index: AtomicU32,
 }
 
-#[allow(unused)]
 pub struct DoubleArena<A: DynAlloc + ?Sized, B: DynAlloc + ?Sized> {
     arena_a: ArenaWithoutIndex<A>,
     arena_b: ArenaWithoutIndex<B>,
@@ -224,7 +223,6 @@ impl<T: DynAlloc + ?Sized> Arena<T> {
     }
 }
 
-#[allow(unused)]
 impl<A: DynAlloc + ?Sized, B: DynAlloc + ?Sized> DoubleArena<A, B> {
     pub fn new(chunk_size: usize, metadata_a: A::Metadata, metadata_b: B::Metadata) -> Self {
         Self {
